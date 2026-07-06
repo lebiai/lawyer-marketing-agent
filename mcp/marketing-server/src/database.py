@@ -114,6 +114,18 @@ def _init_profile_db():
             user_rating INTEGER,
             created_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS billing (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+            action TEXT NOT NULL,
+            target TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            notes_count INTEGER,
+            estimated_cost TEXT,
+            actual_cost REAL,
+            status TEXT NOT NULL DEFAULT 'success',
+            error_message TEXT
+        );
     """)
     conn.commit()
     conn.close()

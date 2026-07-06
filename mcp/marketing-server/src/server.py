@@ -3,6 +3,7 @@ from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_sug
 from platform_adapter import adapt_content
 from competitor_analyzer import check_tikhub_status, analyze_account
 from search_candidates import search_blogger_candidates
+from account_link import parse_account_link, get_cost_estimate
 from video_prompt import generate_video_prompt, generate_templates
 from data_analyzer import get_content_stats, analyze_performance
 from scheduler import generate_calendar, get_templates
@@ -191,12 +192,23 @@ def handle_request(request):
     elif method == "check_tikhub_status":
         return {"jsonrpc": "2.0", "id": request_id, "result": check_tikhub_status()}
 
+    elif method == "parse_account_link":
+        url = params.get("url", "")
+        result = parse_account_link(url)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "get_cost_estimate":
+        notes = params.get("max_notes", 50)
+        result = get_cost_estimate(notes)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
     elif method == "analyze_account":
         account = params.get("account_name", "")
         platform = params.get("platform", "")
         max_notes = params.get("max_notes", 50)
         user_id = params.get("user_id", None)
-        result = analyze_account(account, platform, user_id=user_id)
+        url = params.get("url", None)
+        result = analyze_account(account, platform, user_id=user_id, url=url, max_notes=max_notes)
         
         if result.get("needs_permission"):
             return {"jsonrpc": "2.0", "id": request_id, "result": {

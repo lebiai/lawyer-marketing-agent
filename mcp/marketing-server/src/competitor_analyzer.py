@@ -11,8 +11,12 @@ import os
 import json
 import subprocess
 import re
+import urllib.request
+import urllib.error
 from datetime import datetime
 from search_candidates import search_blogger_candidates
+from account_link import parse_account_link, get_cost_estimate, format_cost_message
+from database import get_conn
 
 # ============================================================
 # 项目路径
@@ -29,6 +33,58 @@ _DISTILLER_DATA = os.path.join(_DISTILLER_DIR, "data")
 # ============================================================
 
 _CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".xiaohongshu", "tikhub_config.json")
+
+
+def check_tikhub_balance() -> dict:
+    """调用 TikHub API 检查账户余额是否充足"""
+    token = _get_token_from_config()
+    if not token:
+        return {"ok": False, "message": "未配置 TikHub Token"}
+
+    try:
+        req = urllib.request.Request(
+            "https://api.tikhub.io/api/v1/user/info",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+            # 余额信息通常在 data.balance 或类似字段
+            balance = data.get("data", {}).get("balance") or data.get("balance")
+            return {"ok": True, "balance": balance, "message": f"余额充足" if balance is None or balance > 0 else "余额不足"}
+    except urllib.error.HTTPError as e:
+        if e.code == 402:
+            return {"ok": False, "message": "TikHub 账户余额不足，请联系微信 iodun001 充值"}
+        return {"ok": False, "message": f"TikHub API 返回错误 (HTTP {e.code})"}
+    except Exception as e:
+        # 网络问题等，允许继续（不做硬性阻断）
+        return {"ok": True, "message": "余额检测跳过（网络问题），将继续采集"}
+
+
+def _get_token_from_config() -> str:
+    if not os.path.exists(_CONFIG_FILE):
+        return ""
+    try:
+        with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg.get("tikhub_api_token", "").strip()
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+
+def record_billing(action: str, target: str, platform: str, notes_count: int, estimated_cost: str, actual_cost: float = None, status: str = "success", error_message: str = None) -> dict:
+    """记录账单到 profile.db"""
+    try:
+        conn = get_conn("profile")
+        conn.execute(
+            "INSERT INTO billing (action, target, platform, notes_count, estimated_cost, actual_cost, status, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (action, target, platform, notes_count, estimated_cost, actual_cost, status, error_message),
+        )
+        conn.commit()
+        bill_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.close()
+        return {"bill_id": bill_id, "ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 def check_tikhub_status() -> dict:
@@ -118,7 +174,9 @@ def run_distiller(account_name: str, platform: str, max_notes: int = 50, user_id
     print(f"📡 正在采集 {account_name} 的 {max_notes} 篇内容，约需 30-45 分钟...")
     result = subprocess.run(crawl_cmd, capture_output=True, text=True, cwd=_DISTILLER_DIR)
     if result.returncode != 0:
-        error_msg = result.stderr or result.stdout or "未知错误"
+        error_msg = (result.stderr or result.stdout or "未知错误").lower()
+        if "402" in error_msg or "余额" in error_msg or "insufficient" in error_msg or "out of credit" in error_msg:
+            return {"error": True, "message": "TikHub 账户余额不足，请联系微信 iodun001 充值", "credit_error": True}
         return {"error": True, "message": f"采集失败: {error_msg[:200]}"}
 
     # ---- Phase 2: 数据分析 ----
@@ -360,20 +418,23 @@ def _detect_title_patterns(titles: list) -> dict:
 # 对外接口
 # ============================================================
 
-def analyze_account(account_name: str, platform: str, posts: list = None, user_id: str = None) -> dict:
+def analyze_account(account_name: str, platform: str, posts: list = None, user_id: str = None, url: str = None, max_notes: int = 50) -> dict:
     """
     完整的竞品账号分析入口
     
     流程：
-      1. 检查 TikHub Token
-      2. 无 Token → 返回引导信息
-      3. 有 Token → 调 blogger-distiller → 产出报告
+      1. 检查 TikHub Token → 无则引导加微信
+      2. 检查 TikHub 余额 → 不足则引导充值
+      3. 调 blogger-distiller → 产出报告
+      4. 记录账单
     
     Args:
         account_name: 博主名
         platform: "xiaohongshu" / "douyin"
-        posts: 保留参数，未使用
-        user_id: 可选。由 search_blogger_candidates 选定后传入
+        posts: 保留参数
+        user_id: 可选。直接指定 user_id 爬取
+        url: 可选。用户提供的链接
+        max_notes: 采集数量 30/50/80
     """
     # 检查权限
     status = check_tikhub_status()
@@ -382,15 +443,50 @@ def analyze_account(account_name: str, platform: str, posts: list = None, user_i
             "report": "🔒 竞品/对标账号分析需要开通权限\n\n"
                       "竞品分析使用 blogger-distiller 数据分析引擎，"
                       "通过 TikHub API 采集小红书/抖音公开数据进行深度分析。\n\n"
-                      "📱 请添加微信 iodun001 开通分析权限\n"
-                      "开通后可分析任意小红书/抖音博主的内容策略、风格特征、互动数据。",
+                      "📱 请添加微信 iodun001 开通分析权限",
             "needs_permission": True,
             "suggested_tags": [],
         }
 
-    # 运行 distiller（可选指定 user_id 跳过搜索阶段）
-    max_notes = 50  # 默认
+    # 检查余额
+    balance = check_tikhub_balance()
+    if not balance.get("ok"):
+        err_msg = balance.get("message", "余额检查失败")
+        record_billing("竞品账号分析", account_name, platform, max_notes, get_cost_estimate(max_notes)["cost_display"], status="failed", error_message=err_msg)
+        return {
+            "report": f"❌ {err_msg}\n\n请联系微信 iodun001 充值后重试。",
+            "credit_error": True,
+            "suggested_tags": [],
+        }
+
+    # 运行 distiller
+    cost_est = get_cost_estimate(max_notes)
     result = run_distiller(account_name, platform, max_notes, user_id=user_id)
+
+    if result.get("error") or result.get("credit_error"):
+        err_msg = result.get("message", "分析失败")
+        record_billing("竞品账号分析", account_name, platform, max_notes, cost_est["cost_display"], status="failed", error_message=err_msg)
+        return {
+            "report": f"❌ {err_msg}",
+            "error": err_msg,
+            "suggested_tags": [],
+        }
+
+    # 构建报告
+    report_data = build_report_from_distiller(result)
+    
+    # 记录账单（使用估算中间值作为实际费用）
+    actual_cost = round((cost_est["cost_min"] + cost_est["cost_max"]) / 2, 2)
+    billing = record_billing("竞品账号分析", account_name, platform, result.get("notes_count", max_notes), cost_est["cost_display"], actual_cost=actual_cost)
+    
+    report_data["billing"] = {
+        "cost_display": cost_est["cost_display"],
+        "actual_cost": actual_cost,
+        "bill_id": billing.get("bill_id"),
+    }
+    report_data["report"] += f"\n\n💰 本次分析费用：¥{actual_cost}（估算 {cost_est['cost_display']}）"
+    
+    return report_data
 
     if result.get("error"):
         return {
