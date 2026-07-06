@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from hot_tracker import get_search_queries, HOT_TOPIC_SEARCHES
+from platform_adapter import adapt_content
 import json
 import sys
 import os
@@ -142,6 +144,31 @@ def handle_request(request):
                 data[f"{db_name}.{table}"] = items
             conn.close()
         return {"jsonrpc": "2.0", "id": request_id, "result": data}
+
+    elif method == "hot_track":
+        industry = params.get("industry", "lawyer")
+        queries = get_search_queries(industry)
+        return {"jsonrpc": "2.0", "id": request_id, "result": {
+            "search_queries": queries,
+            "industry_terms": HOT_TOPIC_SEARCHES.get(industry, {}).get("industry_terms", []),
+            "instruction": "请使用 agent-reach 搜索以上关键词，然后调用 filter_by_industry 筛选结果"
+        }}
+
+    elif method == "adapt_platform":
+        content = params.get("content", "")
+        source = params.get("source_platform", "general")
+        target = params.get("target_platform", "xiaohongshu")
+        from database import get_conn
+        import json
+        conn = get_conn("seed")
+        cur = conn.execute("SELECT rules FROM platform_rules WHERE platform = ?", (target,))
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"error": f"No rules for platform: {target}"}}
+        rules = json.loads(row["rules"])
+        result = adapt_content(content, source, target, rules)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     return {"jsonrpc": "2.0", "id": request_id, "error": {
         "code": -32601, "message": f"Method not found: {method}"
