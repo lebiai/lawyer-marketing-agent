@@ -14,7 +14,7 @@
 帮我安装 https://github.com/lebiai/lawyer-marketing-agent.git
 ```
 
-`setup.mjs` 会自动完成：Python 依赖安装 → 向量模型下载 → 种子知识库构建。
+`setup.mjs` 会自动完成：Python 依赖安装 → Agent Reach 安装 → 向量模型下载 → 种子知识库构建。
 
 ---
 
@@ -100,7 +100,7 @@
 | MCP Server | Python |
 | 向量模型 | BAAI/bge-base-zh-v1.5 (768d) |
 | 数据库 | SQLite (三库分离) |
-| 热点搜索 | agent-reach |
+| 热点搜索 | [Agent Reach](https://github.com/Panniantong/Agent-Reach)（安装时自动安装） |
 | 平台规则 | JSON 可配置 |
 
 ---
