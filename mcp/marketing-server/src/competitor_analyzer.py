@@ -43,7 +43,7 @@ def check_tikhub_balance() -> dict:
 
     try:
         req = urllib.request.Request(
-            "https://api.tikhub.io/api/v1/user/info",
+            "https://api.tikhub.dev/api/v1/tikhub/user/get_user_info",
             headers={"Authorization": f"Bearer {token}"},
         )
         with urllib.request.urlopen(req, timeout=10) as resp:

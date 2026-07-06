@@ -47,7 +47,7 @@ import sys
 import os
 
 # 默认配置
-DEFAULT_BASE_URL = "https://api.tikhub.io"
+DEFAULT_BASE_URL = "https://api.tikhub.dev"
 DEFAULT_TIMEOUT = 60
 DEFAULT_RPS = 10        # TikHub 基础套餐默认 10 RPS
 SAFETY_RATIO = 0.7      # 留 30% 余量，避免偶发触碰限速
