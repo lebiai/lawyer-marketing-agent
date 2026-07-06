@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends, check_search_tools, get_search_instruction
 from platform_adapter import adapt_content
-from competitor_analyzer import generate_analysis_report, extract_style_tags, analyze_account
+from competitor_analyzer import check_tikhub_status, analyze_account
 from video_prompt import generate_video_prompt, generate_templates
 from data_analyzer import get_content_stats, analyze_performance
 from scheduler import generate_calendar, get_templates
@@ -181,26 +181,40 @@ def handle_request(request):
         result = adapt_content(content, source, target)
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
+    elif method == "check_tikhub_status":
+        return {"jsonrpc": "2.0", "id": request_id, "result": check_tikhub_status()}
+
     elif method == "analyze_account":
         account = params.get("account_name", "")
         platform = params.get("platform", "")
-        posts = params.get("posts", [])
-        result = analyze_account(account, platform, posts)
+        max_notes = params.get("max_notes", 50)
+        result = analyze_account(account, platform)
+        
+        if result.get("needs_permission"):
+            return {"jsonrpc": "2.0", "id": request_id, "result": {
+                "report": result["report"],
+                "needs_permission": True,
+                "suggested_tags": [],
+            }}
+        
         return {"jsonrpc": "2.0", "id": request_id, "result": {
-            "report": result["report"],
-            "四层风格分析": result["四层风格分析"],
-            "内容策略": result["内容策略"],
-            "互动表现": result["互动表现"],
-            "高频话题": result["高频话题"],
-            "suggested_tags": result["suggested_tags"],
+            "report": result.get("report", ""),
+            "四层风格分析": result.get("四层风格分析", {}),
+            "内容策略": result.get("内容策略", {}),
+            "互动表现": result.get("互动表现", {}),
+            "高频话题": result.get("高频话题", {}),
+            "认知层": result.get("认知层", {}),
+            "best_performers": result.get("best_performers", []),
+            "suggested_tags": result.get("suggested_tags", []),
+            "style_features": result.get("style_features", {}),
             "storage": {
                 "table": "competitor_analysis",
                 "data": {
                     "account_name": account,
                     "platform": platform,
                     "analysis_type": "full",
-                    "report": result["report"],
-                    "raw_data": {"posts": posts}
+                    "report": result.get("report", ""),
+                    "raw_data": result.get("raw_distiller_data", {}),
                 }
             }
         }}
