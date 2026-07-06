@@ -38,7 +38,7 @@ async function main() {
     console.log('   已存在，执行 git pull 更新...');
     execSync('git pull origin main', { cwd: DISTILLER_DIR, stdio: 'inherit' });
   } else {
-    execSync('git clone https://github.com/otter1101/blogger-distiller.git "' + DISTILLER_DIR + '"', { stdio: 'inherit' });
+    execSync('git clone --depth 1 https://github.com/otter1101/blogger-distiller.git "' + DISTILLER_DIR + '"', { stdio: 'inherit' });
   }
   console.log('   ✅ blogger-distiller 安装完成');
 

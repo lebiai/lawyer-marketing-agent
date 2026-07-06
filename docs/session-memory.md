@@ -192,3 +192,39 @@ f3ef9e3  P1: add hot_tracker + platform_adapter modules
 
 - GitHub: `github.com/lebiai/lawyer-marketing-agent`
 - 安装命令：`帮我安装 https://github.com/lebiai/lawyer-marketing-agent.git`
+
+---
+
+## 十一、竞品账号分析 V3 — blogger-distiller 集成（2026-07-06）
+
+### 设计决策
+
+| 决策 | 结论 |
+|------|------|
+| 分析引擎 | blogger-distiller（otter1101/blogger-distiller） |
+| 安装方式 | setup.mjs 中 git clone --depth 1 到 mcp/blogger-distiller/ |
+| 权限控制 | 首次使用时检查 TikHub Token → 无则引导加微信 iodun001 |
+| 支持平台 | 小红书 + 抖音（distiller 原生支持） |
+| 公众号 | 保留现有 keyword-based 分析 |
+| 采集数量 | 30/50/80 三档，让用户选择 |
+| 数据回流 | 全量存 competitor_analysis.raw_data + 风格特征存 content_samples |
+| TikHub Token | 由管理员开通后配置，用户不自行注册 |
+
+### 调用流程
+
+```
+用户"分析XX账号"
+  → check_tikhub_status
+  → 无 Token → "加微信 iodun001 开通"
+  → 有 Token → crawl_blogger.py → analyze.py → 读 analysis.json
+  → build_report_from_distiller() → 7维报告
+  → store_knowledge(competitor_analysis) → store_knowledge(content_samples)
+```
+
+### 文件变更
+
+- `setup.mjs` — 新增 blogger-distiller 克隆步骤
+- `competitor_analyzer.py` — V3 重写，新增 check_tikhub_status/run_distiller
+- `server.py` — 新增 check_tikhub_status RPC，更新 analyze_account 返回格式
+- `SKILL.md` — 更新为权限门+7维框架
+- `requirements.txt` — 新增 python-docx 依赖
