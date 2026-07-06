@@ -1310,6 +1310,17 @@ def crawl_blogger(keyword=None, user_id=None, output_dir=None, token=None, is_se
         note_ids = chunk_data.get("note_ids", [])
         nickname = chunk_data.get("nickname", "unknown")
         user_id = chunk_data.get("user_id", "")
+        # 同时获取主页信息
+        try:
+            profile = get_profile(client, user_id, "", max_notes=10) if user_id else ({}, {})
+            profile_data = profile[0] if isinstance(profile, tuple) else profile
+            profile_path_c = os.path.join(output_dir, f"{safe_name}_profile.json")
+            with open(profile_path_c, "w", encoding="utf-8") as f:
+                json.dump(profile_data, f, ensure_ascii=False, indent=2)
+            print(f"  💾 主页信息: {profile_path_c}")
+        except Exception as e:
+            print(f"  ⚠️ 获取主页信息失败（非关键）: {e}")
+        #
         safe_name = safe_filename(nickname)
         print(f"\n{'='*60}")
         print(f"🔧 chunk 模式: {nickname} ({len(note_ids)} 条笔记)")
@@ -1420,6 +1431,11 @@ def crawl_blogger(keyword=None, user_id=None, output_dir=None, token=None, is_se
             json.dump(ids_data, f, ensure_ascii=False, indent=2)
         print(f"\n💾 笔记ID列表: {ids_path} ({len(ids_data['note_ids'])}条)")
         print("\n✅ list-only 模式完成")
+        # 保存主页信息（供下游使用）
+        profile_path = os.path.join(output_dir, f"{safe_name}_profile.json")
+        with open(profile_path, "w", encoding="utf-8") as f:
+            json.dump(profile, f, ensure_ascii=False, indent=2)
+        print(f"  💾 主页信息: {profile_path}")
         return {
             "nickname": nickname,
             "user_id": user_id,
@@ -1582,7 +1598,10 @@ if __name__ == "__main__":
     print(f"\n{'='*60}")
     print(f"🎉 采集完成! 用时 {elapsed:.0f}秒")
     print(f"   博主: {result['nickname']}")
-    print(f"   笔记: {len(result['notes_list'])}条")
-    print(f"   详情: {len([d for d in result['details'] if '_error' not in d])}条有效")
-    print(f"   输出: {result['output_dir']}")
+    notes_list_count = len(result.get('notes_list', []))
+    details_count = len([d for d in result.get('details', []) if '_error' not in d])
+    output = result.get('output_dir', '?')
+    print(f"   笔记: {notes_list_count}条")
+    print(f"   详情: {details_count}条有效")
+    print(f"   输出: {output}")
     print(f"{'='*60}")

@@ -772,6 +772,7 @@ def build_report_from_distiller(result: dict) -> dict:
     value_words = result.get("value_words", [])
 
     # ---- 定位与基调（从观点句 + 标签 + 互动特征推断） ----
+    title_patterns = {}
     tone = "中性"
     stance = "中性叙述"
     audience = "泛人群"
@@ -1476,8 +1477,15 @@ def generate_html_report(account_name: str, platform: str, report_data: dict, fu
                         profile.get("desc") or profile.get("description") or "")
             fans_count = (basic.get("fans") or basic.get("fansCount") or basic.get("fans_count") or 
                          basic.get("followerCount") or basic.get("followers") or "")
+            # 如果 basic 里没有 fans，尝试从 profile.interactions 中提取
+            if not fans_count:
+                for inter in profile.get("interactions") or []:
+                    if inter.get("type") == "fans":
+                        fans_count = str(inter.get("count", ""))
+                        break
             avatar_raw = (basic.get("avatar") or basic.get("avatarUrl") or basic.get("headUrl") or
-                          basic.get("head_img") or profile.get("avatar") or "")
+                          basic.get("head_img") or basic.get("images") or basic.get("imageb") or 
+                          profile.get("avatar") or "")
             # 小红书 avatar 可能是 dict { url_list: [...] } 或字符串
             if isinstance(avatar_raw, dict):
                 url_list = avatar_raw.get("url_list") or []
