@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends
+from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends, check_search_tools, get_search_instruction
 from platform_adapter import adapt_content
 from competitor_analyzer import generate_analysis_report, extract_style_tags
 from video_prompt import generate_video_prompt, generate_templates
@@ -311,6 +311,15 @@ def handle_request(request):
     elif method == "get_all_platforms":
         result = get_all_platforms_summary()
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
+    elif method == "check_search_tools":
+        result = check_search_tools()
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "get_search_instruction":
+        industry = params.get("industry", "lawyer")
+        result = get_search_instruction(industry)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
     return {"jsonrpc": "2.0", "id": request_id, "error": {
         "code": -32601, "message": f"Method not found: {method}"
     }}
