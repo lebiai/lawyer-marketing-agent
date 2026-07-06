@@ -3,6 +3,9 @@ from hot_tracker import get_search_queries, HOT_TOPIC_SEARCHES
 from platform_adapter import adapt_content
 from competitor_analyzer import generate_analysis_report, extract_style_tags
 from video_prompt import generate_video_prompt, generate_templates
+from data_analyzer import get_content_stats, analyze_performance
+from scheduler import generate_calendar, get_templates
+from comment_assistant import suggest_reply, analyze_sentiment
 import json
 import sys
 import os
@@ -202,6 +205,37 @@ def handle_request(request):
     elif method == "get_video_templates":
         templates = generate_templates()
         return {"jsonrpc": "2.0", "id": request_id, "result": templates}
+
+    elif method == "get_content_stats":
+        days = params.get("days", 30)
+        stats = get_content_stats(days)
+        return {"jsonrpc": "2.0", "id": request_id, "result": stats}
+
+    elif method == "analyze_performance":
+        articles = params.get("articles", [])
+        result = analyze_performance(articles)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "generate_calendar":
+        template = params.get("template", "balanced")
+        start = params.get("start_date")
+        calendar = generate_calendar(template, start)
+        return {"jsonrpc": "2.0", "id": request_id, "result": calendar}
+
+    elif method == "get_schedule_templates":
+        templates = get_templates()
+        return {"jsonrpc": "2.0", "id": request_id, "result": templates}
+
+    elif method == "suggest_reply":
+        comment = params.get("comment", "")
+        category = params.get("category")
+        result = suggest_reply(comment, category)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "analyze_sentiment":
+        comments = params.get("comments", [])
+        result = analyze_sentiment(comments)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     return {"jsonrpc": "2.0", "id": request_id, "error": {
         "code": -32601, "message": f"Method not found: {method}"
