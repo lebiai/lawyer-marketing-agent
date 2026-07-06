@@ -6,6 +6,8 @@ from video_prompt import generate_video_prompt, generate_templates
 from data_analyzer import get_content_stats, analyze_performance
 from scheduler import generate_calendar, get_templates
 from comment_assistant import suggest_reply, analyze_sentiment
+from brand_checker import check_brand_consistency, suggest_improvements
+from asset_library import store_asset, search_assets, get_asset_stats, get_categories
 import json
 import sys
 import os
@@ -235,6 +237,39 @@ def handle_request(request):
     elif method == "analyze_sentiment":
         comments = params.get("comments", [])
         result = analyze_sentiment(comments)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "check_brand":
+        content = params.get("content", "")
+        platform = params.get("platform")
+        result = check_brand_consistency(content, platform)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "suggest_improvements":
+        content = params.get("content", "")
+        platform = params.get("platform", "xiaohongshu")
+        result = suggest_improvements(content, platform)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "store_asset":
+        result = store_asset(
+            params.get("name", ""),
+            params.get("category", "other"),
+            params.get("description", ""),
+            params.get("tags")
+        )
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "search_assets":
+        result = search_assets(params.get("query"), params.get("category"))
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "get_asset_stats":
+        result = get_asset_stats()
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "get_asset_categories":
+        result = get_categories()
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     return {"jsonrpc": "2.0", "id": request_id, "error": {
