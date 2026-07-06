@@ -1,0 +1,8 @@
+[project]
+name = "lawyer-marketing-agent"
+version = "0.1.0"
+
+[mcp_servers.marketing_server]
+command = "python3"
+args = ["mcp/marketing-server/src/server.py"]
+env = { PYTHONPATH = "${PROJECT_DIR}/mcp/marketing-server/src" }

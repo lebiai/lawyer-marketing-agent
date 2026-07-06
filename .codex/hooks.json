@@ -1,0 +1,9 @@
+{
+  "on_thread_start": [
+    {
+      "type": "command",
+      "command": "python3",
+      "args": ["mcp/marketing-server/scripts/check-update.py"]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+knowledge.db
+profile.db
+__pycache__/
+*.pyc
+.env
+dist/
+node_modules/
+.venv/
