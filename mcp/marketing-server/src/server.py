@@ -418,6 +418,12 @@ def handle_request(request):
         result = gt()
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
+
+    elif method == "store_platform_rules":
+        from copywriter import initialize_platform_rules
+        result = initialize_platform_rules()
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
     return {"jsonrpc": "2.0", "id": request_id, "error": {
         "code": -32601, "message": f"Method not found: {method}"
     }}

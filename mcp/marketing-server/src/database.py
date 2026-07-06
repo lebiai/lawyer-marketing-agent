@@ -106,9 +106,9 @@ def _init_profile_db():
         );
         CREATE TABLE IF NOT EXISTS conversation_logs (
             id INTEGER PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            user_input TEXT NOT NULL,
-            agent_response TEXT NOT NULL,
+            session_id TEXT DEFAULT 'default',
+            user_input TEXT DEFAULT '',
+            agent_response TEXT DEFAULT '',
             skill_used TEXT,
             knowledge_refs TEXT,
             user_rating INTEGER,
