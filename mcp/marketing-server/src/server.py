@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends, check_search_tools, get_search_instruction
-from platform_adapter import adapt_content
+from platform_adapter import adapt_content as adapt_content_platform
 from competitor_analyzer import check_tikhub_status, analyze_account, open_report, search_accounts_by_tags, store_analysis_result
 from search_candidates import search_blogger_candidates
 from account_link import parse_account_link, get_cost_estimate
@@ -11,7 +11,7 @@ from comment_assistant import suggest_reply, analyze_sentiment
 from brand_checker import check_brand_consistency, suggest_improvements
 from asset_library import store_asset, search_assets, get_asset_stats, get_categories
 from style_analyzer import analyze_style, compare_styles
-from copywriter import generate_outline, adapt_across_platforms, get_platform_kpi, get_all_platforms_summary
+from copywriter import generate_outline, adapt_across_platforms, get_platform_kpi, get_all_platforms_summary, initialize_platform_rules
 import json
 import sys
 import os
@@ -31,6 +31,11 @@ def handle_request(request):
     if method == "initialize":
         init_databases()
         model_info = get_model()
+        # 初始化平台规则种子数据
+        try:
+            initialize_platform_rules()
+        except Exception:
+            pass
         return {
             "jsonrpc": "2.0", "id": request_id,
             "result": {
@@ -180,7 +185,7 @@ def handle_request(request):
         content = params.get("content", "")
         source = params.get("source_platform", "general")
         target = params.get("target_platform", "xiaohongshu")
-        result = adapt_content(content, source, target)
+        result = adapt_content_platform(content, source, target)
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     elif method == "search_blogger_candidates":
