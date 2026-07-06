@@ -12,6 +12,7 @@ import json
 import subprocess
 import re
 from datetime import datetime
+from search_candidates import search_blogger_candidates
 
 # ============================================================
 # 项目路径
@@ -85,14 +86,15 @@ PLATFORM_MAP = {
 COUNT_MAP = {"1": 30, "2": 50, "3": 80}
 
 
-def run_distiller(account_name: str, platform: str, max_notes: int = 50) -> dict:
+def run_distiller(account_name: str, platform: str, max_notes: int = 50, user_id: str = None) -> dict:
     """
     运行 blogger-distiller 全流程（Phase 1 采集 + Phase 2 分析）
     
     Args:
-        account_name: 博主名
+        account_name: 博主名（用于展示）
         platform: "xiaohongshu" / "douyin"
         max_notes: 30 / 50 / 80
+        user_id: 可选。指定 user_id 可跳过搜索阶段，直接爬取
     
     Returns:
         分析结果 dict
@@ -110,6 +112,8 @@ def run_distiller(account_name: str, platform: str, max_notes: int = 50) -> dict
         "--max-notes", str(max_notes),
         "--platform", plat,
     ]
+    if user_id:
+        crawl_cmd.extend(["--user-id", user_id])
 
     print(f"📡 正在采集 {account_name} 的 {max_notes} 篇内容，约需 30-45 分钟...")
     result = subprocess.run(crawl_cmd, capture_output=True, text=True, cwd=_DISTILLER_DIR)
@@ -356,7 +360,7 @@ def _detect_title_patterns(titles: list) -> dict:
 # 对外接口
 # ============================================================
 
-def analyze_account(account_name: str, platform: str, posts: list = None) -> dict:
+def analyze_account(account_name: str, platform: str, posts: list = None, user_id: str = None) -> dict:
     """
     完整的竞品账号分析入口
     
@@ -364,6 +368,12 @@ def analyze_account(account_name: str, platform: str, posts: list = None) -> dic
       1. 检查 TikHub Token
       2. 无 Token → 返回引导信息
       3. 有 Token → 调 blogger-distiller → 产出报告
+    
+    Args:
+        account_name: 博主名
+        platform: "xiaohongshu" / "douyin"
+        posts: 保留参数，未使用
+        user_id: 可选。由 search_blogger_candidates 选定后传入
     """
     # 检查权限
     status = check_tikhub_status()
@@ -378,9 +388,9 @@ def analyze_account(account_name: str, platform: str, posts: list = None) -> dic
             "suggested_tags": [],
         }
 
-    # 运行 distiller
+    # 运行 distiller（可选指定 user_id 跳过搜索阶段）
     max_notes = 50  # 默认
-    result = run_distiller(account_name, platform, max_notes)
+    result = run_distiller(account_name, platform, max_notes, user_id=user_id)
 
     if result.get("error"):
         return {

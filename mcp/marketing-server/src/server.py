@@ -2,6 +2,7 @@
 from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends, check_search_tools, get_search_instruction
 from platform_adapter import adapt_content
 from competitor_analyzer import check_tikhub_status, analyze_account
+from search_candidates import search_blogger_candidates
 from video_prompt import generate_video_prompt, generate_templates
 from data_analyzer import get_content_stats, analyze_performance
 from scheduler import generate_calendar, get_templates
@@ -181,6 +182,12 @@ def handle_request(request):
         result = adapt_content(content, source, target)
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
+    elif method == "search_blogger_candidates":
+        keyword = params.get("keyword", "")
+        platform = params.get("platform", "xhs")
+        result = search_blogger_candidates(keyword, platform)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
     elif method == "check_tikhub_status":
         return {"jsonrpc": "2.0", "id": request_id, "result": check_tikhub_status()}
 
@@ -188,7 +195,8 @@ def handle_request(request):
         account = params.get("account_name", "")
         platform = params.get("platform", "")
         max_notes = params.get("max_notes", 50)
-        result = analyze_account(account, platform)
+        user_id = params.get("user_id", None)
+        result = analyze_account(account, platform, user_id=user_id)
         
         if result.get("needs_permission"):
             return {"jsonrpc": "2.0", "id": request_id, "result": {
