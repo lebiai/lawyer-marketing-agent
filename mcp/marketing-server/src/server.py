@@ -8,6 +8,7 @@ from scheduler import generate_calendar, get_templates
 from comment_assistant import suggest_reply, analyze_sentiment
 from brand_checker import check_brand_consistency, suggest_improvements
 from asset_library import store_asset, search_assets, get_asset_stats, get_categories
+from style_analyzer import analyze_style, compare_styles
 import json
 import sys
 import os
@@ -270,6 +271,18 @@ def handle_request(request):
 
     elif method == "get_asset_categories":
         result = get_categories()
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+    elif method == "analyze_style":
+        text = params.get("text", "")
+        account = params.get("account_name")
+        result = analyze_style(text, account)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "compare_styles":
+        samples = params.get("samples", [])
+        result = compare_styles(samples)
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     return {"jsonrpc": "2.0", "id": request_id, "error": {
