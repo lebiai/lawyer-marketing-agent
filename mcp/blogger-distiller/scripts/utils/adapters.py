@@ -886,11 +886,25 @@ def _dy_video_item(v: dict) -> dict:
         if not cover_url:
             cover_url = (video.get("dynamic_cover") or {}).get("url_list", [""])[0] or ""
 
+    # 判断是否为图文作品
+    is_image_post = bool(item.get("images")) or item.get("is_multi_content") == 1
+    post_type = "image" if is_image_post else "video"
+    # 图文作品的图片列表（JPEG 格式 URL）
+    images_urls = []
+    if is_image_post:
+        for img in (item.get("images") or []):
+            url_list = img.get("url_list") or []
+            jpeg_url = url_list[1] if len(url_list) > 1 else (url_list[0] if url_list else "")
+            if jpeg_url:
+                images_urls.append(jpeg_url)
+        if not cover_url and images_urls:
+            cover_url = images_urls[0]
+
     return {
         "id": _pick(item, "aweme_id", "video_id", default=""),
         "title": _pick(item, "desc", "title", default=""),
         "cover": cover_url,
-        "type": "video",
+        "type": post_type,
         "likes": _dy_count(stat.get("digg_count")),
         "comments": _dy_count(stat.get("comment_count")),
         "collects": _dy_count(stat.get("collect_count")),
@@ -899,12 +913,13 @@ def _dy_video_item(v: dict) -> dict:
         "author_id": _pick(author, "sec_uid", "uid", default=""),
         "author_name": _pick(author, "nickname", "name", default=""),
         "create_time": str(item.get("create_time", "")),
-        "video_url": ((video.get("play_addr_h264") or video.get("play_addr") or {})
+        "video_url": "" if is_image_post else ((video.get("play_addr_h264") or video.get("play_addr") or {})
                       .get("url_list", [""])[0] or ""),
         "duration": str(video.get("duration", "")),
         "music_title": music.get("title", ""),
         "tags": [t.get("hashtag_name", "") for t in (item.get("text_extra") or [])
                  if t.get("hashtag_name")],
+        "images": images_urls,
         "_raw_platform": "douyin",
     }
 

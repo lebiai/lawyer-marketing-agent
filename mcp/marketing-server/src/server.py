@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends, check_search_tools, get_search_instruction
 from platform_adapter import adapt_content
-from competitor_analyzer import check_tikhub_status, analyze_account
+from competitor_analyzer import check_tikhub_status, analyze_account, open_report
 from search_candidates import search_blogger_candidates
 from account_link import parse_account_link, get_cost_estimate
 from video_prompt import generate_video_prompt, generate_templates
@@ -192,6 +192,11 @@ def handle_request(request):
     elif method == "check_tikhub_status":
         return {"jsonrpc": "2.0", "id": request_id, "result": check_tikhub_status()}
 
+    elif method == "open_report":
+        account_name = params.get("account_name", "")
+        msg = open_report(account_name)
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"message": msg}}
+
     elif method == "parse_account_link":
         url = params.get("url", "")
         result = parse_account_link(url)
@@ -206,9 +211,11 @@ def handle_request(request):
         account = params.get("account_name", "")
         platform = params.get("platform", "")
         max_notes = params.get("max_notes", 50)
+        max_comments = params.get("max_comments", 20)
+        parallel_workers = params.get("parallel_workers", 3)
         user_id = params.get("user_id", None)
         url = params.get("url", None)
-        result = analyze_account(account, platform, user_id=user_id, url=url, max_notes=max_notes)
+        result = analyze_account(account, platform, user_id=user_id, url=url, max_notes=max_notes, max_comments=max_comments, parallel_workers=parallel_workers)
         
         if result.get("needs_permission"):
             return {"jsonrpc": "2.0", "id": request_id, "result": {
@@ -217,6 +224,19 @@ def handle_request(request):
                 "suggested_tags": [],
             }}
         
+        export_summary = result.get("export_summary", {})
+        analysis_data = result.get("full_analysis_data", {})
+
+        # 构建媒体摘要
+        media_summary = {}
+        if export_summary:
+            media_summary = {
+                "export_dir": export_summary.get("export_dir", ""),
+                "content_count": export_summary.get("content_count", 0),
+                "total_images": export_summary.get("total_images", 0),
+                "total_videos": export_summary.get("total_videos", 0),
+            }
+
         return {"jsonrpc": "2.0", "id": request_id, "result": {
             "report": result.get("report", ""),
             "四层风格分析": result.get("四层风格分析", {}),
@@ -227,6 +247,10 @@ def handle_request(request):
             "best_performers": result.get("best_performers", []),
             "suggested_tags": result.get("suggested_tags", []),
             "style_features": result.get("style_features", {}),
+            "export_summary": media_summary,
+            "full_analysis_data": analysis_data,
+            "comment_insight": result.get("comment_insight", {}),
+            "html_report_path": result.get("html_report_path", ""),
             "storage": {
                 "table": "competitor_analysis",
                 "data": {
@@ -234,7 +258,7 @@ def handle_request(request):
                     "platform": platform,
                     "analysis_type": "full",
                     "report": result.get("report", ""),
-                    "raw_data": result.get("raw_distiller_data", {}),
+                    "raw_data": analysis_data,
                 }
             }
         }}

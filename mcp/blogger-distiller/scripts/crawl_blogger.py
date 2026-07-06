@@ -34,6 +34,8 @@ def main():
     # 先解析 --platform，再把剩余参数转发给子脚本
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--platform", default="xhs", choices=["xhs", "douyin"])
+    parser.add_argument("--list-only", action="store_true")
+    parser.add_argument("--chunk-file", help="只处理指定 chunk 文件中的笔记ID")
     args, remaining = parser.parse_known_args()
 
     scripts_dir = os.path.dirname(os.path.abspath(__file__))
@@ -57,8 +59,15 @@ def main():
     else:
         target = os.path.join(scripts_dir, "crawl_xhs.py")
 
+    # 追加路由层新增的参数
+    extra = []
+    if args.list_only:
+        extra.append("--list-only")
+    if args.chunk_file:
+        extra.extend(["--chunk-file", args.chunk_file])
+
     # 移除 --platform 参数后转发所有剩余参数
-    cmd = [sys.executable, target] + remaining
+    cmd = [sys.executable, target] + remaining + extra
     os.execv(sys.executable, cmd)
 
 

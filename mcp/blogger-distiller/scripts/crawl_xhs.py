@@ -1283,7 +1283,7 @@ def _print_final_quality_report(details, stats):
 # ----------------------------------------------------------
 # 主流程
 # ----------------------------------------------------------
-def crawl_blogger(keyword=None, user_id=None, output_dir=None, token=None, is_self=False, extra_keywords=None, max_notes=80, transcript=False):
+def crawl_blogger(keyword=None, user_id=None, output_dir=None, token=None, is_self=False, extra_keywords=None, max_notes=80, transcript=False, max_comments=20, list_only=False, chunk_file=None):
     """
     完整爬取一个博主的全量数据。
     
@@ -1299,6 +1299,44 @@ def crawl_blogger(keyword=None, user_id=None, output_dir=None, token=None, is_se
         dict — { profile, notes_list, details, nickname, user_id }
     """
     client = TikHubClient(token=token)
+    
+    # ---- chunk-file 模式：跳过搜索/列表获取，直接从文件加载笔记ID进行详情采集 ----
+    if chunk_file:
+        if not os.path.exists(chunk_file):
+            print(f"\n❌ chunk 文件不存在: {chunk_file}")
+            return {"error": f"chunk file not found: {chunk_file}"}
+        with open(chunk_file, "r", encoding="utf-8") as f:
+            chunk_data = json.load(f)
+        note_ids = chunk_data.get("note_ids", [])
+        nickname = chunk_data.get("nickname", "unknown")
+        user_id = chunk_data.get("user_id", "")
+        safe_name = safe_filename(nickname)
+        print(f"\n{'='*60}")
+        print(f"🔧 chunk 模式: {nickname} ({len(note_ids)} 条笔记)")
+        print(f"{'='*60}")
+        # 构造 notes dict（只需 id 字段供 get_all_details 使用）
+        notes = {}
+        for nid in note_ids:
+            notes[nid] = {"id": nid, "likedCount": 0}
+        notes_list = list(notes.values())
+        # 跳转到详情采集
+        details = get_all_details(client, notes, output_dir, nickname, transcript=transcript)
+        details, quality_stats = repair_incomplete_notes(details, client)
+        details, comments_fetched = fetch_comments_batch(details, client, max_comments_per_note=max_comments)
+        quality_stats["comments_fetched"] = comments_fetched
+        _print_final_quality_report(details, quality_stats)
+        supplement_video_urls_for_whisper(details, client, transcript)
+        # 保存结果
+        details_path = os.path.join(output_dir, f"{safe_name}_notes_details.json")
+        with open(details_path, "w", encoding="utf-8") as f:
+            json.dump(details, f, ensure_ascii=False, indent=2)
+        print(f"\n💾 chunk 详情已保存: {details_path}")
+        return {
+            "nickname": nickname,
+            "user_id": user_id,
+            "details_path": details_path,
+            "detail_count": len(details),
+        }
     
     # 定位博主
     xsec_token = ""
@@ -1368,6 +1406,27 @@ def crawl_blogger(keyword=None, user_id=None, output_dir=None, token=None, is_se
         json.dump(notes_list, f, ensure_ascii=False, indent=2)
     print(f"\n💾 笔记列表: {list_path} ({len(notes_list)}条)")
     
+    # --list-only 模式：保存 ID 文件后退出
+    if list_only:
+        ids_path = os.path.join(output_dir, f"{safe_name}_note_ids.json")
+        ids_data = {
+            "nickname": nickname,
+            "user_id": user_id,
+            "platform": "xhs",
+            "note_ids": [n["id"] for n in notes_list],
+            "total": len(notes_list),
+        }
+        with open(ids_path, "w", encoding="utf-8") as f:
+            json.dump(ids_data, f, ensure_ascii=False, indent=2)
+        print(f"\n💾 笔记ID列表: {ids_path} ({len(ids_data['note_ids'])}条)")
+        print("\n✅ list-only 模式完成")
+        return {
+            "nickname": nickname,
+            "user_id": user_id,
+            "note_ids_path": ids_path,
+            "note_count": len(ids_data["note_ids"]),
+        }
+    
     # 保存主页信息
     profile_path = os.path.join(output_dir, f"{safe_name}_profile.json")
     with open(profile_path, "w", encoding="utf-8") as f:
@@ -1398,7 +1457,7 @@ def crawl_blogger(keyword=None, user_id=None, output_dir=None, token=None, is_se
         details, quality_stats = repair_incomplete_notes(details, client)
 
         # 轮次3：独立评论采集（对缺评论但 commentCount>0 的笔记调独立评论端点）
-        details, comments_fetched = fetch_comments_batch(details, client)
+        details, comments_fetched = fetch_comments_batch(details, client, max_comments_per_note=max_comments)
         quality_stats["comments_fetched"] = comments_fetched
 
         _print_final_quality_report(details, quality_stats)
@@ -1479,6 +1538,10 @@ if __name__ == "__main__":
     parser.add_argument("--keywords", help="领域关键词（逗号分隔），用于搜索补充。如：烘焙,食谱,探店")
     parser.add_argument("--max-notes", type=int, default=80,
                         help="最大爬取条数上限（默认80，用户可根据需要调大，如 --max-notes 100）")
+    parser.add_argument("--max-comments", type=int, default=20,
+                        help="每条笔记最多采集的评论数（默认20，深度分析可调大）")
+    parser.add_argument("--list-only", action="store_true", help="仅获取笔记ID列表，不采集详情")
+    parser.add_argument("--chunk-file", help="从笔记ID文件加载，只处理指定chunk")
     parser.add_argument("--transcript", action="store_true", help="开启视频口播转写（需要 Whisper）")
     args = parser.parse_args()
 
@@ -1510,6 +1573,9 @@ if __name__ == "__main__":
         extra_keywords=extra_keywords,
         max_notes=args.max_notes,
         transcript=args.transcript,
+        max_comments=args.max_comments,
+        list_only=args.list_only,
+        chunk_file=args.chunk_file,
     )
     elapsed = time.time() - start
     

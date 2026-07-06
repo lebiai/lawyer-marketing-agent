@@ -60,10 +60,16 @@ def _normalize_video_obj(adapter_item: dict) -> dict:
     将适配器归一化后的 _dy_video_item 转换为最终 video 字段格式。
 
     适配器输出字段：id / title / cover / likes / comments / collects /
-                   shares / plays / create_time / video_url / tags
-    最终格式与 XHS note 对齐：interactInfo / coverUrl / videoUrl / tagList
+                   shares / plays / create_time / video_url / tags / images
+    最终格式与 XHS note 对齐：interactInfo / coverUrl / videoUrl / tagList / imageList
+
+    图文作品（type=image）自动从 adapter_item.images 提取图片 URL。
     """
-    return {
+    post_type = adapter_item.get("type", "video")
+    images_from_adapter = adapter_item.get("images") or []
+    is_image = post_type == "image" or len(images_from_adapter) > 0
+
+    result = {
         "desc": adapter_item.get("title", ""),
         "title": adapter_item.get("title", ""),
         "time": adapter_item.get("create_time", ""),
@@ -74,16 +80,17 @@ def _normalize_video_obj(adapter_item: dict) -> dict:
             "collectedCount": adapter_item.get("collects", "0"),
             "playCount": adapter_item.get("plays", "0"),
         },
-        "type": adapter_item.get("type", "video"),
+        "type": "image" if is_image else "video",
         "coverUrl": adapter_item.get("cover", ""),
-        "videoUrl": adapter_item.get("video_url", ""),
-        "imageList": [],
+        "videoUrl": "" if is_image else adapter_item.get("video_url", ""),
+        "imageList": images_from_adapter if is_image else [],
         "tagList": [{"name": t} for t in adapter_item.get("tags", [])],
         "duration": adapter_item.get("duration", ""),
         "authorId": adapter_item.get("author_id", ""),
         "authorName": adapter_item.get("author_name", ""),
         "musicTitle": adapter_item.get("music_title", ""),
     }
+    return result
 
 
 def _extract_comments_from_raw(raw) -> list:
@@ -440,7 +447,7 @@ def fetch_video_comments_batch(details, client, max_comments_per_video=20):
 # ----------------------------------------------------------
 # 主流程
 # ----------------------------------------------------------
-def crawl_douyin(keyword=None, user_id=None, output_dir=None, token=None, max_videos=50, transcript=False):
+def crawl_douyin(keyword=None, user_id=None, output_dir=None, token=None, max_videos=50, transcript=False, max_comments=20, list_only=False, chunk_file=None):
     """
     完整爬取一个抖音博主的全量作品数据。
 
@@ -455,6 +462,32 @@ def crawl_douyin(keyword=None, user_id=None, output_dir=None, token=None, max_vi
         dict — { profile, videos_list, details, nickname, user_id }
     """
     client = TikHubClient(token=token, platform="douyin")
+
+    # ---- chunk-file 模式：跳过搜索/列表获取，直接从文件加载作品ID进行详情采集 ----
+    if chunk_file:
+        if not os.path.exists(chunk_file):
+            print(f"\n❌ chunk 文件不存在: {chunk_file}")
+            return {"error": f"chunk file not found: {chunk_file}"}
+        with open(chunk_file, "r", encoding="utf-8") as f:
+            chunk_data = json.load(f)
+        video_ids = chunk_data.get("note_ids", chunk_data.get("video_ids", []))
+        nickname = chunk_data.get("nickname", "unknown")
+        user_id = chunk_data.get("user_id", "")
+        safe_name = safe_filename(nickname)
+        print(f"\n{'='*60}")
+        print(f"🔧 chunk 模式: {nickname} ({len(video_ids)} 条作品)")
+        print(f"{'='*60}")
+        details = get_all_video_details(client, {v: {'id': v, 'likes': '0'} for v in video_ids}, output_dir, nickname)
+        details, comments_fetched = fetch_video_comments_batch(details, client, max_comments_per_video=max_comments)
+        details_path = os.path.join(output_dir, f"{safe_name}_videos_details.json")
+        save_json(details, details_path)
+        print(f"\n💾 chunk 详情已保存: {details_path}")
+        return {
+            "nickname": nickname,
+            "user_id": user_id,
+            "details_path": details_path,
+            "detail_count": len(details),
+        }
 
     nickname = keyword or ""
 
@@ -500,6 +533,26 @@ def crawl_douyin(keyword=None, user_id=None, output_dir=None, token=None, max_vi
     save_json(videos_list, list_path)
     print(f"\n💾 作品列表: {list_path} ({len(videos_list)}条)")
 
+    # --list-only 模式：保存 ID 文件后退出
+    if list_only:
+        ids_path = os.path.join(output_dir, f"{safe_name}_note_ids.json")
+        ids_data = {
+            "nickname": nickname,
+            "user_id": user_id,
+            "platform": "douyin",
+            "note_ids": [v["id"] for v in videos_list],
+            "total": len(videos_list),
+        }
+        save_json(ids_data, ids_path)
+        print(f"\n💾 作品ID列表: {ids_path} ({len(ids_data['note_ids'])}条)")
+        print("\n✅ list-only 模式完成")
+        return {
+            "nickname": nickname,
+            "user_id": user_id,
+            "note_ids_path": ids_path,
+            "note_count": len(ids_data["note_ids"]),
+        }
+
     # 保存主页信息
     profile_path = os.path.join(output_dir, f"{safe_name}_profile.json")
     save_json(profile, profile_path)
@@ -536,7 +589,7 @@ def crawl_douyin(keyword=None, user_id=None, output_dir=None, token=None, max_vi
     details = get_all_video_details(client, videos, output_dir, nickname, on_detail_ready=transcript_callback)
 
     # 采集评论
-    details, comments_fetched = fetch_video_comments_batch(details, client)
+    details, comments_fetched = fetch_video_comments_batch(details, client, max_comments_per_video=max_comments)
 
     # 落盘（含转写结果）
     details_path = os.path.join(output_dir, f"{safe_name}_videos_details.json")
@@ -574,6 +627,10 @@ if __name__ == "__main__":
     parser.add_argument("--output", "-o", default=".", help="数据输出目录")
     parser.add_argument("--token", help="TikHub API Token")
     parser.add_argument("--max-videos", type=int, default=50, help="最大爬取视频数（默认50）")
+    parser.add_argument("--max-comments", type=int, default=20,
+                        help="每条视频最多采集的评论数（默认20，深度分析可调大）")
+    parser.add_argument("--list-only", action="store_true", help="仅获取作品ID列表，不采集详情")
+    parser.add_argument("--chunk-file", help="从笔记ID文件加载，只处理指定chunk")
     parser.add_argument("--transcript", action="store_true", help="开启视频口播转写（需要 Whisper）")
     args = parser.parse_args()
 
@@ -594,6 +651,9 @@ if __name__ == "__main__":
         token=token,
         max_videos=args.max_videos,
         transcript=args.transcript,
+        max_comments=args.max_comments,
+        list_only=args.list_only,
+        chunk_file=args.chunk_file,
     )
     elapsed = time.time() - start
 

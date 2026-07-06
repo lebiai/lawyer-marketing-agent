@@ -43,12 +43,12 @@ def get_content_obj(item, platform):
 def extract_tags(desc):
     """从笔记描述中提取话题标签"""
     # 匹配 #标签[话题]# 或 #标签#
-    tags = re.findall(r"#([^#\[\]]+?)(?:\[.*?\])?#?(?=\s|#|$)", desc or "")
+    tags = re.findall(r"#([^#\[\]]+)(?:\[[^\]]*\])?#?(?=\s|#|$)", desc or "")
     return [t.strip() for t in tags if t.strip()]
 
 
 def classify_content(title, desc, tags, tag_clusters=None):
-    """根据标签和内容对笔记分类（动态聚类，不预设领域）
+    """根据标签和内容对笔记分类（动态聚类，不预设领域，覆盖 15+ 内容类型）
     
     Args:
         title: 笔记标题
@@ -64,15 +64,26 @@ def classify_content(title, desc, tags, tag_clusters=None):
             if tag in tag_clusters:
                 return tag_clusters[tag]
     
-    # 通用兜底分类（基于内容模式，不预设领域）
+    # 通用兜底分类（基于内容模式）
     text = (title + " " + (desc or "")).lower()
     
+    # 多层级匹配：先精确匹配，再泛化匹配
     generic_patterns = {
-        "教程/实操": ["教程", "怎么", "如何", "方法", "步骤", "实操", "实战", "手把手", "保姆级", "攻略"],
-        "测评/推荐": ["测评", "推荐", "安利", "种草", "合集", "必备", "宝藏"],
-        "经验分享": ["经验", "心得", "感悟", "踩坑", "总结", "复盘", "分享", "干货"],
-        "作品展示": ["做了一个", "搞了一个", "上线", "成果", "作品", "完成了"],
-        "日常/Vlog": ["日常", "vlog", "一天", "记录", "打卡"],
+        "教程/实操": ["教程", "怎么", "如何", "方法", "步骤", "实操", "实战", "手把手", "保姆级", "攻略", "步骤", "流程"],
+        "测评/推荐": ["测评", "推荐", "安利", "种草", "合集", "必备", "宝藏", "清单", "盘点", "对比", "vs"],
+        "经验分享": ["经验", "心得", "感悟", "踩坑", "总结", "复盘", "分享", "干货", "教训", "血泪"],
+        "观点/评论": ["我觉得", "我认为", "说实话", "真心说", "我想说", "观点", "看法"],
+        "情感/共鸣": ["共鸣", "破防", "泪目", "感动", "暖心", "治愈", "扎心", "真实"],
+        "避坑/警示": ["避雷", "避坑", "上当", "别买", "不要", "千万别", "扯淡", "假"],
+        "科普/解释": ["科普", "解释", "原因", "原理", "真相", "辟谣", "误区", "忽悠"],
+        "故事/叙事": ["那天", "记得", "有一次", "从前", "我", "我的", "亲身", "经历"],
+        "日常/Vlog": ["日常", "vlog", "一天", "记录", "打卡", "plog", "生活"],
+        "作品展示": ["成果", "作品", "完成", "上线", "搞了", "做了", "设计", "效果"],
+        "求助/问答": ["求助", "帮帮", "救", "有人", "有没有", "怎么办", "该不该", "选哪个"],
+        "好物/开箱": ["开箱", "拆箱", "好物", "好物分享", "购物", "买", "入手"],
+        "话题/讨论": ["话题", "讨论", "聊一聊", "聊聊", "大家说", "你们觉得", "征集"],
+        "资讯/速递": ["最新", "新规", "政策", "官宣", "发布", "上线", "更新"],
+        "趣味/娱乐": ["搞笑", "笑死", "哈哈哈", "梗", "段子", "整活", "挑战", "好玩"],
     }
     
     for cat, keywords in generic_patterns.items():
@@ -117,7 +128,7 @@ def build_tag_clusters(all_notes_tags, top_n=8):
 # ----------------------------------------------------------
 
 def extract_opinion_sentences(notes):
-    """D1：从全量笔记正文中提取观点句候选"""
+    """D1：从全量笔记正文中提取观点句候选（扩展到 8 个语义维度）"""
     opinion_keywords = {
         "判断词": ["我觉得", "我认为", "其实", "本质上", "说白了", "归根结底",
                    "核心是", "关键在于", "真正的", "最重要的"],
@@ -125,6 +136,11 @@ def extract_opinion_sentences(notes):
                  "实际上", "大家都说", "表面上"],
         "总结": ["所以", "因此", "这说明", "这意味着", "一句话概括",
                  "总结一下", "换句话说"],
+        "反问质疑": ["难道", "凭什么", "为什么非要", "怎么可以", "真的吗", "不是吧"],
+        "价值判断": ["值得", "不值得", "真的太", "真的是", "才是", "就在于", "比什么都重要"],
+        "情感宣泄": ["我真的", "受不了", "无语", "绝了", "哭了", "太好", "太绝"],
+        "建议劝告": ["一定要", "千万不要", "建议大家", "提醒", "忠告", "真心建议"],
+        "认知刷新": ["原来", "才知道", "发现", "意识到", "明白了", "终于懂了", "恍然大悟"],
     }
 
     candidates = []
@@ -203,14 +219,15 @@ def extract_value_words(notes):
                     "他们", "她们", "你们", "很多", "一点", "有点", "有些", "其实", "只是"}
 
     word_counter = Counter()
+    note_words = {}  # {word: [note_ids]}
     for note in notes:
         desc = note.get("desc", "") or ""
         if not desc:
             continue
         # 先删除话题标签（#标签[话题]# 和 #标签 两种格式）
-        desc = re.sub(r"#[^#\s]+?(?:\[.*?\])?#?", "", desc)
+        desc = re.sub(r"#[^#\s\[\]]+(?:\[[^\]]*\])?#?", "", desc)
         # 切词
-        tokens = re.split(r"[\s，。！？、；：""''【】《》\(\)（）\[\]…—\-/\\|]", desc)
+        tokens = re.split(r"[]\s，。！？、；：“”‘’【】《》()（）[…—/|\\-]", desc)
         for token in tokens:
             token = token.strip()
             if 2 <= len(token) <= 4:
@@ -220,8 +237,22 @@ def extract_value_words(notes):
                 if token in stop_phrases:
                     continue
                 word_counter[token] += 1
+                note_words.setdefault(token, []).append(note.get("id", ""))
 
-    return [{"word": w, "count": c} for w, c in word_counter.most_common(15)]
+    # 过滤：只保留出现在至少2篇笔记中的词（排除碎片化单篇用词）
+    filtered = []
+    for w, c in word_counter.most_common(30):
+        unique_notes = len(set(note_words.get(w, [])))
+        if unique_notes >= 2:
+            filtered.append({"word": w, "count": c})
+        if len(filtered) >= 15:
+            break
+    
+    # 如果过滤后不足5个，放宽条件包含所有高频词
+    if len(filtered) < 5:
+        filtered = [{"word": w, "count": c} for w, c in word_counter.most_common(15)]
+    
+    return filtered
 
 
 # ----------------------------------------------------------
@@ -282,7 +313,7 @@ def analyze_notes(details_path, self_details_path=None):
         _transcript = item.get("transcript") or {}
         notes.append({
             "id": content.get("noteId") or content.get("aweme_id") or item.get("_feed_id", ""),
-            "title": content.get("title", content.get("displayTitle", "")),
+            "title": content.get("title", content.get("displayTitle", "")) or content.get("desc", "")[:40],
             "desc": content.get("desc", ""),
             "type": content.get("type", "normal"),
             "likes": parse_count(interact.get("likedCount", "0")),
@@ -342,7 +373,7 @@ def analyze_notes(details_path, self_details_path=None):
             "count": count,
             "pct": round(count / total * 100, 1) if total else 0,
             "avg_likes": cat_likes // len(cat_notes) if cat_notes else 0,
-            "top_note": cat_notes[0]["title"] if cat_notes else "",
+            "top_note": (cat_notes[0]["title"] or cat_notes[0]["desc"][:60]) if cat_notes else "",
         }
 
     # ---- 标签统计 ----
@@ -355,7 +386,7 @@ def analyze_notes(details_path, self_details_path=None):
     top10 = []
     for n in notes[:10]:
         top_comments = []
-        for c in n["comment_list"][:5]:
+        for c in n["comment_list"][:20]:
             # 合规改造 v2.0：评论已在 crawl 阶段源头脱敏，只读 speaker / is_author
             # 兼容旧数据：若无 speaker（v1.x 旧 JSON）则回退到 userInfo.nickname
             speaker = c.get("speaker") or c.get("userInfo", {}).get("nickname", "?")

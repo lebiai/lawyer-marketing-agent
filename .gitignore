@@ -6,3 +6,10 @@ __pycache__/
 dist/
 node_modules/
 .venv/
+
+# Generated data
+账号分析/
+mcp/marketing-server/data/report_registry.json
+*.bak
+*.patched
+douyin_image_post.json
