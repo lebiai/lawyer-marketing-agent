@@ -167,16 +167,7 @@ def handle_request(request):
         content = params.get("content", "")
         source = params.get("source_platform", "general")
         target = params.get("target_platform", "xiaohongshu")
-        from database import get_conn
-        import json
-        conn = get_conn("seed")
-        cur = conn.execute("SELECT rules FROM platform_rules WHERE platform = ?", (target,))
-        row = cur.fetchone()
-        conn.close()
-        if not row:
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"error": f"No rules for platform: {target}"}}
-        rules = json.loads(row["rules"])
-        result = adapt_content(content, source, target, rules)
+        result = adapt_content(content, source, target)
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     elif method == "analyze_account":
