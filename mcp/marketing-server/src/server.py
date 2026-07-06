@@ -112,10 +112,15 @@ def handle_request(request):
 
     elif method == "log_conversation":
         from database import get_conn as get_profile_conn
+        session_id = params.get("session_id") or "default"
+        user_input = params.get("user_input") or ""
+        agent_response = params.get("agent_response") or ""
+        if not user_input and not agent_response:
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"status": "skipped", "reason": "empty"}}
         conn = get_profile_conn("profile")
         conn.execute(
             "INSERT INTO conversation_logs (session_id, user_input, agent_response, skill_used, knowledge_refs) VALUES (?, ?, ?, ?, ?)",
-            (params.get("session_id"), params.get("user_input"), params.get("agent_response"),
+            (session_id, user_input, agent_response,
              params.get("skill_used"), json.dumps(params.get("knowledge_refs", [])))
         )
         conn.commit()
@@ -406,6 +411,12 @@ def handle_request(request):
         result = store_analysis_result(account_name, platform, analysis_data)
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
+
+
+    elif method == "generate_video_templates":
+        from video_prompt import generate_templates as gt
+        result = gt()
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     return {"jsonrpc": "2.0", "id": request_id, "error": {
         "code": -32601, "message": f"Method not found: {method}"

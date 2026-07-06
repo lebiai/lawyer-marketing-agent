@@ -56,15 +56,18 @@ def _to_voiceover_prompt(script: str) -> dict:
     }
 
 def _suggest_expression(line: str) -> str:
-    if any(w in line for w in ["注意", "警惕", "千万别", "小心"]):
+    """基于关键词给出表情建议（模板式，Agent可覆盖）"""
+    if any(w in line for w in ["注意", "警惕", "千万别", "小心", "警告"]):
         return "表情严肃，眼神坚定"
-    elif any(w in line for w in ["你知道吗", "其实", "没想到"]):
+    elif any(w in line for w in ["你知道吗", "其实", "没想到", "揭秘", "真相"]):
         return "微微惊讶，引起好奇"
-    elif any(w in line for w in ["好消息", "恭喜", "终于"]):
+    elif any(w in line for w in ["好消息", "恭喜", "终于", "赢了", "成功"]):
         return "微笑，积极"
-    elif any(w in line for w in ["？", "吗"]):
+    elif any(w in line for w in ["？", "吗", "什么", "怎么", "为什么"]):
         return "挑眉，疑问表情"
-    return "自然认真"
+    elif any(w in line for w in ["别", "不要", "禁止", "违法"]):
+        return "严肃，摆手强调"
+    return "自然认真，保持专业"
 
 def _suggest_visual(scene_idx: int, line: str) -> str:
     visuals = [

@@ -1,4 +1,4 @@
-"""评论助手模块 — 评论回复建议与评论情感分析"""
+"""评论助手模块 V2 — 中文关键词匹配"""
 
 REPLY_TEMPLATES = {
     "thanks": {
@@ -39,11 +39,11 @@ REPLY_TEMPLATES = {
 def suggest_reply(comment: str, category: str = None) -> dict:
     """根据评论内容和可选分类推荐回复话术"""
     if not category:
-        if any(w in comment for w in ["谢谢", "感谢", "赞", "棒"]):
+        if any(w in comment for w in ["谢谢", "感谢", "赞", "棒", "有用", "好"]):
             category = "thanks"
-        elif "?" in comment or "？" in comment or "吗" in comment or "怎么" in comment:
+        elif "?" in comment or "？" in comment or "吗" in comment or "怎么" in comment or "如何" in comment or "什么" in comment:
             category = "question"
-        elif any(w in comment for w in ["不对", "不同意", "错了", "不是"]):
+        elif any(w in comment for w in ["不对", "不同意", "错了", "不是", "不对"]):
             category = "disagree"
         else:
             category = "thanks"
@@ -63,9 +63,9 @@ def analyze_sentiment(comments: list) -> dict:
     if total == 0:
         return {"total": 0, "error": "无评论数据"}
 
-    positive = sum(1 for c in comments if any(w in c for w in ["谢谢", "赞", "好", "棒", "有用"]))
-    questioning = sum(1 for c in comments if "?" in c or "？" in c or "吗" in c)
-    negative = sum(1 for c in comments if any(w in c for w in ["不对", "错了", "差", "不好"]))
+    positive = sum(1 for c in comments if any(w in c for w in ["谢谢", "赞", "好", "棒", "有用", "感谢", "收藏"]))
+    questioning = sum(1 for c in comments if "?" in c or "？" in c or "吗" in c or "怎么" in c or "如何" in c)
+    negative = sum(1 for c in comments if any(w in c for w in ["不对", "错了", "差", "不好", "没用", "坑"]))
     other = total - positive - questioning - negative
 
     return {
