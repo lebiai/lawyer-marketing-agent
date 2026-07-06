@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends, check_search_tools, get_search_instruction
 from platform_adapter import adapt_content
-from competitor_analyzer import generate_analysis_report, extract_style_tags
+from competitor_analyzer import generate_analysis_report, extract_style_tags, analyze_account
 from video_prompt import generate_video_prompt, generate_templates
 from data_analyzer import get_content_stats, analyze_performance
 from scheduler import generate_calendar, get_templates
@@ -184,20 +184,23 @@ def handle_request(request):
     elif method == "analyze_account":
         account = params.get("account_name", "")
         platform = params.get("platform", "")
-        raw_data = params.get("raw_data", {})
-        report = generate_analysis_report(account, platform, raw_data)
-        tags = extract_style_tags(report)
+        posts = params.get("posts", [])
+        result = analyze_account(account, platform, posts)
         return {"jsonrpc": "2.0", "id": request_id, "result": {
-            "report": report,
-            "suggested_tags": tags,
+            "report": result["report"],
+            "四层风格分析": result["四层风格分析"],
+            "内容策略": result["内容策略"],
+            "互动表现": result["互动表现"],
+            "高频话题": result["高频话题"],
+            "suggested_tags": result["suggested_tags"],
             "storage": {
                 "table": "competitor_analysis",
                 "data": {
                     "account_name": account,
                     "platform": platform,
                     "analysis_type": "full",
-                    "report": report,
-                    "raw_data": raw_data
+                    "report": result["report"],
+                    "raw_data": {"posts": posts}
                 }
             }
         }}
