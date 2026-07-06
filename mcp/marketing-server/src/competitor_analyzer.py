@@ -19,7 +19,6 @@ from datetime import datetime
 from urllib.parse import urlparse
 from search_candidates import search_blogger_candidates, _CONFIG_FILE
 from account_link import parse_account_link, get_cost_estimate, format_cost_message
-from llm_analyzer import deep_analyze, is_llm_available
 from database import get_conn
 
 # ============================================================
@@ -761,7 +760,7 @@ def safe_filename(name: str) -> str:
 # 从 distiller 分析结果构建报告+风格
 # ============================================================
 
-def build_report_from_distiller(result: dict, llm_data: dict = None) -> dict:
+def build_report_from_distiller(result: dict) -> dict:
     """
     将 distiller 的分析结果转为我们的 6维报告格式+风格特征
     """
@@ -922,31 +921,7 @@ def build_report_from_distiller(result: dict, llm_data: dict = None) -> dict:
         "writing_structure": result.get("writing_structure", {}),
     }
 
-    # ---- 风格特征 ----
-    # LLM 分析优先，回退到规则引擎
-    if llm_data and llm_data.get("style"):
-        s = llm_data["style"]
-        tone = s.get("tone", tone)
-        stance = s.get("stance", stance)
-        audience = s.get("audience", audience)
-        if s.get("title_patterns"):
-            title_patterns = {p: {"pct": 0} for p in s["title_patterns"]}
-        if s.get("language_features"):
-            _language_features = s["language_features"]
-    
-    if llm_data and llm_data.get("content_strategy"):
-        cs = llm_data["content_strategy"]
-        if cs.get("categories"):
-            main_categories = [
-                {"name": c["name"], "count": int(round(c["pct"] * stats.get("total", 0) / 100)), 
-                 "pct": c["pct"], "avg_likes": stats.get("avg_likes", 0)}
-                for c in cs["categories"][:6] if c.get("pct", 0) > 0
-            ]
-        if cs.get("core_opinions"):
-            opinion = [{"sentence": o} for o in cs["core_opinions"]]
-        if cs.get("value_words"):
-            value_words = [{"word": w, "count": 0} for w in cs["value_words"]]
-
+    # ---- 风格特征（用于存入 content_samples） ----
     style_features = {
         "tone": tone,
         "stance": stance,
@@ -1107,20 +1082,7 @@ def analyze_account(account_name: str, platform: str, posts: list = None, user_i
         }
 
     # 构建报告
-    # LLM 深度分析（替代关键词匹配）
-    llm_data = {}
-    if is_llm_available():
-        try:
-            notes = (result.get("raw_data") or {}).get("notes", [])
-            stats = (result.get("raw_data") or {}).get("stats", {})
-            tag_freq = (result.get("raw_data") or {}).get("tag_freq", [])
-            profile = result.get("profile", {})
-            print("  🤖 LLM 深度分析中...")
-            llm_data = deep_analyze(profile, notes, stats, tag_freq)
-        except Exception as e:
-            print(f"  ⚠️ LLM 分析异常: {e}")
-    
-    report_data = build_report_from_distiller(result, llm_data=llm_data)
+    report_data = build_report_from_distiller(result)
     
     # 记录账单（使用估算中间值作为实际费用）
     actual_cost = round((cost_est["cost_min"] + cost_est["cost_max"]) / 2, 2)
@@ -1145,28 +1107,9 @@ def analyze_account(account_name: str, platform: str, posts: list = None, user_i
     report_data["export_summary"] = export_summary
     report_data["full_analysis_data"] = result.get("raw_data", {})
     
-    # 评论洞察分析（LLM 优先，回退到关键词引擎）
+    # 评论洞察分析
     full_data = result.get("raw_data", {})
-    if llm_data and llm_data.get("comment_insight"):
-        ci = llm_data["comment_insight"]
-        comment_insight = {
-            "sentiment": ci.get("sentiment", {}),
-            "sentiment_label": ci.get("sentiment_label", "中性"),
-            "pain_conclusions": [p.get("point", "") for p in ci.get("pain_points", [])],
-            "need_conclusions": [n.get("need", "") for n in ci.get("user_needs", [])],
-            "top_comments": [
-                {"content": c.get("content", ""), "likes": c.get("likes", 0), 
-                 "user": c.get("user", "读者")}
-                for c in ci.get("notable_comments", [])[:5]
-            ],
-            "total_comment_count": sum(
-                len(n.get("comment_list", [])) for n in (full_data.get("notes", []) or (full_data.get("top10") or []))
-            ),
-            "interaction_summary": ci.get("interaction_style", ""),
-        }
-        print(f"  ✅ LLM 评论洞察已应用")
-    else:
-        comment_insight = analyze_comments(full_data)
+    comment_insight = analyze_comments(full_data)
     report_data["comment_insight"] = comment_insight
     
     # 生成 HTML 报告
