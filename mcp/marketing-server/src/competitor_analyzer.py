@@ -1476,8 +1476,14 @@ def generate_html_report(account_name: str, platform: str, report_data: dict, fu
                         profile.get("desc") or profile.get("description") or "")
             fans_count = (basic.get("fans") or basic.get("fansCount") or basic.get("fans_count") or 
                          basic.get("followerCount") or basic.get("followers") or "")
-            avatar = (basic.get("avatar") or basic.get("avatarUrl") or basic.get("headUrl") or
-                     basic.get("head_img") or profile.get("avatar") or "")
+            avatar_raw = (basic.get("avatar") or basic.get("avatarUrl") or basic.get("headUrl") or
+                          basic.get("head_img") or profile.get("avatar") or "")
+            # 小红书 avatar 可能是 dict { url_list: [...] } 或字符串
+            if isinstance(avatar_raw, dict):
+                url_list = avatar_raw.get("url_list") or []
+                avatar = url_list[0] if url_list else ""
+            else:
+                avatar = avatar_raw if isinstance(avatar_raw, str) else ""
             user_info = {
                 "nickname": nickname,
                 "desc": desc_text,
@@ -1491,8 +1497,14 @@ def generate_html_report(account_name: str, platform: str, report_data: dict, fu
             desc_text = (user.get("description") or profile.get("description") or "")
             fans_count = (user.get("fans") or user.get("followerCount") or 
                          user.get("follower_count") or "")
-            avatar = (user.get("avatar") or user.get("avatarLarger") or 
-                     user.get("avatarThumb") or profile.get("avatar") or "")
+            avatar_raw = (user.get("avatar") or user.get("avatarLarger") or 
+                          user.get("avatarThumb") or profile.get("avatar") or "")
+            # 抖音 avatar 可能是 dict { url_list: [...] } 或字符串
+            if isinstance(avatar_raw, dict):
+                url_list = avatar_raw.get("url_list") or []
+                avatar = url_list[0] if url_list else ""
+            else:
+                avatar = avatar_raw if isinstance(avatar_raw, str) else ""
             user_info = {
                 "nickname": nickname,
                 "desc": desc_text,
