@@ -2,8 +2,7 @@
 // 律师营销助手安装脚本
 
 import { execSync } from 'child_process';
-import { existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -23,7 +22,10 @@ async function main() {
   // 3. 安装 Agent Reach（互联网能力）
   console.log('📦 安装 Agent Reach（互联网搜索能力）...');
   try {
+    // 第一步：安装包
     execSync('pipx install https://github.com/Panniantong/agent-reach/archive/main.zip 2>/dev/null || pip3 install https://github.com/Panniantong/agent-reach/archive/main.zip', { stdio: 'inherit' });
+    // 第二步：完成配置（安装上游工具、注册 MCP 等）
+    execSync('agent-reach install --env=auto', { stdio: 'inherit' });
     console.log('   ✅ Agent Reach 安装完成');
   } catch (e) {
     console.log('   ⚠️ Agent Reach 安装失败（不影响核心功能，热点追踪将使用备用搜索方案）');
