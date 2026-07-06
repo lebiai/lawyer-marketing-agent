@@ -144,6 +144,17 @@ def _init_profile_db():
         );
         CREATE INDEX IF NOT EXISTS idx_account_tags_industry ON account_tags(industry_tags);
         CREATE INDEX IF NOT EXISTS idx_account_tags_location ON account_tags(location_tags);
+
+        CREATE TABLE IF NOT EXISTS analysis_results (
+            id INTEGER PRIMARY KEY,
+            account_name TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            analysis_type TEXT NOT NULL,
+            analysis_data TEXT NOT NULL,
+            raw_data_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_ar_account ON analysis_results(account_name);
     """)
     conn.commit()
     conn.close()

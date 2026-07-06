@@ -762,7 +762,9 @@ def safe_filename(name: str) -> str:
 
 def build_report_from_distiller(result: dict) -> dict:
     """
-    将 distiller 的分析结果转为我们的 6维报告格式+风格特征
+    从 distiller 采集数据中提取统计信息。
+    仅处理数值统计 + 原始数据整理，不做 LLM 级别的分析。
+    分析由 Codex agent 完成并通过 store_analysis_result 存入。
     """
     stats = result.get("stats", {})
     category_stats = result.get("category_stats", {})
@@ -771,102 +773,19 @@ def build_report_from_distiller(result: dict) -> dict:
     opinion = result.get("opinion_candidates", [])
     value_words = result.get("value_words", [])
 
-    # ---- 定位与基调（从观点句 + 标签 + 互动特征推断） ----
-    title_patterns = {}
-    tone = "中性"
-    stance = "中性叙述"
-    audience = "泛人群"
-    opinion_text = " ".join(c["sentence"] for c in opinion[:20])
-    all_tags_text = " ".join(t[0] for t in tag_freq[:20])
-    combined_text = opinion_text + " " + all_tags_text
-    
-    # --- 情感基调（8种风格） ---
-    if combined_text:
-        tone_score = {}
-        # 犀利直白
-        if any(w in combined_text for w in ["必须", "一定", "绝不", "警告", "警惕", "千万别", "马上", "立即", "立刻", "停止"]):
-            tone_score["犀利直白"] = sum(combined_text.count(w) for w in ["必须", "一定", "绝不", "警告", "警惕", "千万别", "马上", "立即"])
-        # 温暖治愈
-        if any(w in combined_text for w in ["温暖", "别怕", "没关系", "一起", "陪伴", "加油", "温柔", "爱自己", "治愈", "拥抱"]):
-            tone_score["温暖治愈"] = sum(combined_text.count(w) for w in ["温暖", "别怕", "一起", "加油", "温柔", "治愈"])
-        # 理性客观
-        if any(w in combined_text for w in ["数据", "研究", "分析", "根据", "统计", "调查", "报告", "趋势", "比例", "案例"]):
-            tone_score["理性客观"] = sum(combined_text.count(w) for w in ["数据", "分析", "根据", "统计", "调查"])
-        # 幽默风趣
-        if any(w in combined_text for w in ["笑死", "哈哈哈", "笑", "搞笑", "段子", "离谱", "整活", "沙雕"]):
-            tone_score["幽默风趣"] = sum(combined_text.count(w) for w in ["笑死", "搞笑", "离谱", "沙雕"])
-        # 文艺感性
-        if any(w in combined_text for w in ["月光", "诗意", "浪漫", "灵魂", "时光", "岁月", "星辰", "山海", "温柔"]):
-            tone_score["文艺感性"] = sum(combined_text.count(w) for w in ["诗意", "浪漫", "灵魂", "时光", "星辰"])
-        # 热血有力
-        if any(w in combined_text for w in ["改变", "突破", "奋斗", "逆袭", "坚持", "力量", "强大", "成长", "觉醒"]):
-            tone_score["热血有力"] = sum(combined_text.count(w) for w in ["突破", "奋斗", "逆袭", "坚持", "强大", "觉醒"])
-        # 高级克制
-        if any(w in combined_text for w in ["极简", "质感", "审美", "设计", "品味", "风格"]):
-            tone_score["高级克制"] = sum(combined_text.count(w) for w in ["极简", "质感", "审美", "设计", "品味"])
-        # 共情倾诉
-        if any(w in combined_text for w in ["懂你", "我懂", "经历过", "一样", "也是", "感同身受", "理解"]):
-            tone_score["共情倾诉"] = sum(combined_text.count(w) for w in ["懂你", "经历过", "一样", "感同身受", "理解"])
-        
-        if tone_score:
-            tone = max(tone_score, key=tone_score.get)
-    
-    # --- 语气立场（5种） ---
-    if combined_text:
-        stance_score = {}
-        # 朋友分享
-        if any(w in combined_text for w in ["我觉得", "我认为", "我的", "我", "分享"]):
-            stance_score["朋友分享"] = sum(combined_text.count(w) for w in ["我觉得", "我的", "我", "分享"])
-        # 权威指导
-        if any(w in combined_text for w in ["记住", "千万", "注意", "法律规定", "必须", "一定", "绝对", "所有人"]):
-            stance_score["权威指导"] = sum(combined_text.count(w) for w in ["记住", "注意", "法律规定", "必须", "绝对"])
-        # 平等对话
-        if any(w in combined_text for w in ["我们", "一起", "大家", "姐妹们", "兄弟们"]):
-            stance_score["平等对话"] = sum(combined_text.count(w) for w in ["我们", "一起", "大家"])
-        # 自嘲玩梗
-        if any(w in combined_text for w in ["本", "本人", "菜", "社恐", "i人", "懒人", "手残"]):
-            stance_score["自嘲玩梗"] = sum(combined_text.count(w) for w in ["菜", "社恐", "懒人", "手残"])
-        # 官方正式
-        if any(w in combined_text for w in ["公告", "通知", "声明", "说明"]):
-            stance_score["官方正式"] = sum(combined_text.count(w) for w in ["公告", "通知", "声明"])
-        
-        if stance_score:
-            stance = max(stance_score, key=stance_score.get)
-    
-    # --- 目标受众（从标签+内容推断） ---
-    audience_map = [
-        (["职场", "工作", "上班", "打工人", "同事", "老板"], "职场人群"),
-        (["宝妈", "育儿", "孩子", "宝宝", "妈妈", "亲子", "孕"], "宝妈/育儿群体"),
-        (["学生", "考研", "高考", "考公", "留学", "校园", "大学生"], "学生群体"),
-        (["单身", "恋爱", "对象", "男朋友", "女朋友", "相亲", "结婚"], "婚恋群体"),
-        (["减肥", "健身", "运动", "健康", "养生", "饮食"], "健康养生群体"),
-        (["穿搭", "化妆", "护肤", "变美", "时尚", "发型"], "时尚美妆群体"),
-        (["投资", "理财", "买房", "赚钱", "副业", "存钱"], "理财投资群体"),
-        (["律师", "打官司", "离婚", "合同", "维权", "法律"], "法律需求群体"),
-        (["退休", "老年", "养老", "社保", "医保"], "中老年群体"),
-        (["00后", "90后", "年轻", "年轻人"], "年轻群体"),
-    ]
-    best_match = None
-    best_count = 0
-    for keywords, label in audience_map:
-        count = sum(combined_text.count(kw) for kw in keywords)
-        if count > best_count:
-            best_count = count
-            best_match = label
-    if best_match:
-        audience = best_match
+    total = stats.get("total", 0)
+    engagement = {
+        "avg_likes": stats.get("avg_likes", 0),
+        "avg_comments": stats.get("avg_comments", 0),
+        "avg_collects": stats.get("avg_collects", 0),
+        "avg_shares": stats.get("avg_shares", 0),
+        "collected_rate": stats.get("collected_rate", 0),
+        "total_likes": stats.get("total_likes", 0),
+        "total_comments": stats.get("total_comments", 0),
+        "total_collects": stats.get("total_collects", 0),
+    }
 
-    # 如果观点句太少且没有标签匹配，fallback 到统计推断
-    if audience == "泛人群" and title_patterns:
-        # 从标题模式推断
-        if "故事型" in title_patterns and title_patterns["故事型"].get("pct", 0) > 30:
-            audience = "故事共鸣型读者"
-        elif "教程型" in title_patterns and title_patterns["教程型"].get("pct", 0) > 30:
-            audience = "学习实操型读者"
-        elif "数字型" in title_patterns and title_patterns["数字型"].get("pct", 0) > 30:
-            audience = "效率信息型读者"
-
-    # ---- 语言与文字（从 top10 统计） ----
+    # ---- 标题模式检测（纯统计） ----
     if top10:
         sample_titles = [n.get("title", "") for n in top10]
         avg_title_len = round(sum(len(t) for t in sample_titles) / len(sample_titles)) if sample_titles else 0
@@ -875,26 +794,18 @@ def build_report_from_distiller(result: dict) -> dict:
         avg_title_len = 0
         title_patterns = {}
 
-    # ---- 互动表现 ----
-    total = stats.get("total", 0)
-    engagement = {
-        "avg_likes": stats.get("avg_likes", 0),
-        "avg_comments": stats.get("avg_comments", 0),
-        "avg_collects": stats.get("avg_collects", 0),
-        "avg_shares": stats.get("avg_shares", 0),
-        "total_likes": stats.get("total_likes", 0),
-        "total_samples": total,
-        "collected_rate": stats.get("collected_rate", 0),
-    }
-
-    # ---- 内容策略 ----
+    # ---- 分类统计 ----
     main_categories = []
     if category_stats:
         sorted_cats = sorted(category_stats.items(), key=lambda x: x[1].get("count", 0), reverse=True)
-        main_categories = [
-            {"name": name, "count": v.get("count", 0), "pct": v.get("pct", 0), "avg_likes": v.get("avg_likes", 0)}
-            for name, v in sorted_cats[:6]
-        ]
+        for name, info in sorted_cats:
+            main_categories.append({
+                "name": name,
+                "count": info.get("count", 0),
+                "pct": info.get("pct", 0),
+                "avg_likes": info.get("avg_likes", 0),
+                "top_note": info.get("top_note", ""),
+            })
 
     # ---- 高频话题 ----
     topics = []
@@ -915,18 +826,15 @@ def build_report_from_distiller(result: dict) -> dict:
             "tags": n.get("tags", []),
         })
 
-    # ---- 认知层----
+    # ---- 认知层（原始观点句 + 价值词，不做分析） ----
     cognitive = {
-        "core_opinions": [c["sentence"] for c in opinion[:10]],
-        "value_words": [v["word"] for v in value_words[:10]],
+        "core_opinions": [c["sentence"] for c in opinion[:10] if isinstance(c, dict)],
+        "value_words": [v["word"] for v in value_words[:10] if isinstance(v, dict)],
         "writing_structure": result.get("writing_structure", {}),
     }
 
-    # ---- 风格特征（用于存入 content_samples） ----
+    # ---- 风格特征（仅标题统计，无 tone/stance/audience 关键词匹配） ----
     style_features = {
-        "tone": tone,
-        "stance": stance,
-        "audience": audience,
         "title_avg_length": avg_title_len,
         "title_patterns": title_patterns,
         "main_content_type": main_categories[0]["name"] if main_categories else "",
@@ -936,27 +844,23 @@ def build_report_from_distiller(result: dict) -> dict:
             "collects": engagement["avg_collects"],
         },
         "topic_tags": [t["topic"] for t in topics[:8]],
-        "value_words": [v["word"] for v in value_words[:8]],
+        "value_words": [v["word"] for v in value_words[:8] if isinstance(v, dict)],
     }
 
     account_name = result.get("account_name", "")
     platform = result.get("platform", "xhs")
     platform_label = "小红书" if platform == "xhs" else "抖音"
 
-    # ---- 报告文本 ----
+    # ---- 纯统计报告文本（不含 LLM 分析） ----
     report_lines = [
-        f"╔══ 竞品账号分析报告：{account_name}",
+        f"╔══ 竞品账号数据采集报告：{account_name}",
         f"║ 📌 平台：{platform_label}",
         f"║ 📊 样本：{total} 篇内容 | 均赞 {engagement['avg_likes']:,} | 均藏 {engagement['avg_collects']:,}",
-        f"║ 🔬 来源：blogger-distiller 数据分析引擎\n",
-        "【📌 定位与基调】",
-        f"  ▸ 目标受众：{audience}",
-        f"  ▸ 情感基调：{tone}",
-        f"  ▸ 语气立场：{stance}\n",
-        "【✏️ 语言与文字】",
+        f"║ 🔬 来源：blogger-distiller 数据分析引擎",
+        "【✏️ 标题统计】",
         f"  ▸ 标题平均长度：{avg_title_len}字",
-        f"  ▸ 标题模式：{', '.join(title_patterns.keys()) if title_patterns else '多样'}\n",
-        "【📋 内容策略】",
+        f"  ▸ 标题模式：{', '.join(title_patterns.keys()) if title_patterns else '多样'}",
+        "【📋 内容分类】",
     ]
     for cat in main_categories[:5]:
         report_lines.append(f"  ▸ {cat['name']}: {cat['count']}篇 ({cat['pct']}%) · 均赞{cat['avg_likes']:,}")
@@ -965,7 +869,7 @@ def build_report_from_distiller(result: dict) -> dict:
     report_lines.append(f"  ▸ 均赞 {engagement['avg_likes']:,} · 均评 {engagement['avg_comments']} · 均藏 {engagement['avg_collects']:,}")
     report_lines.append(f"  ▸ 藏赞比 {engagement['collected_rate']}（越高说明内容越实用）")
     report_lines.append("")
-    report_lines.append("【🔥 高频话题】")
+    report_lines.append("【🔥 高频话题标签】")
     for t in topics[:10]:
         report_lines.append(f"  ▸ #{t['topic']} ({t['frequency']}次)")
     report_lines.append("")
@@ -973,32 +877,22 @@ def build_report_from_distiller(result: dict) -> dict:
     for b in best_performers:
         report_lines.append(f"  ▸ [{b['likes']}赞] {b['title'][:50]}")
     report_lines.append("")
-    report_lines.append("【🧠 认知层】")
+    report_lines.append("【🧠 观点句样本（需LLM分析）】")
     for o in cognitive["core_opinions"][:5]:
-        report_lines.append(f"  ▸ \"{o[:120]}...\"")
+        report_lines.append(f'  ▸ "{o[:120]}..."')
     report_lines.append("")
-    report_lines.append("【🏷️ 风格总结】")
-    tags = f"{tone} · {stance} · {main_categories[0]['name'] if main_categories else '综合'}"
-    report_lines.append(f"  ▸ {tags}")
+    report_lines.append("【💡 提示】以上为原始数据统计。深度分析（风格定位、用户痛点/需求等）需由 LLM 完成。")
 
     return {
         "report": "\n".join(report_lines),
-        "四层风格分析": {
-            "定位与基调": {"目标受众": audience, "情感基调": tone, "语气立场": stance},
-            "语言与文字": {"标题平均长度": f"{avg_title_len}字", "标题模式": title_patterns},
-            "表达与修辞": {"叙事逻辑": cognitive["writing_structure"], "观点句": cognitive["core_opinions"][:5]},
-            "传播与适配": {"平台": platform_label},
-        },
         "内容策略": {"types_distribution": {c["name"]: f"{c['pct']}%" for c in main_categories[:6]}},
         "互动表现": engagement,
         "高频话题": {"topics": topics[:10], "total_topics": len(topics)},
         "best_performers": best_performers,
-        "认知层": cognitive,
-        "suggested_tags": [tone, stance, main_categories[0]["name"] if main_categories else "综合"],
+        "suggested_tags": [main_categories[0]["name"] if main_categories else "综合"],
         "style_features": style_features,
         "raw_distiller_data": result.get("raw_data"),
     }
-
 
 def _detect_title_patterns(titles: list) -> dict:
     patterns = {
@@ -1401,7 +1295,6 @@ def analyze_account(account_name: str, platform: str, posts: list = None, user_i
         category_stats=raw_data.get("category_stats", {}),
         top10=raw_data.get("top10", []),
     )
-    report_data["account_tags"] = account_tags
     
     # 将标签存入数据库
     try:
@@ -1579,16 +1472,17 @@ from datetime import datetime
 # 情绪关键词
 _POSITIVE_WORDS = {"好", "喜欢", "好看", "棒", "厉害", "优秀", "绝", "赞", "值得", "推荐", "神仙", "宝藏", "佩服", "牛逼", "太棒", "美", "帅", "精致", "高级", "大气", "绝绝子", "冲", "种草", "爱了", "yyds", "惊艳", "天花板", "封神", "满分", "无敌", "完美", "满意", "超出预期", "回购", "无限回购", "一生推", "强烈推荐", "必入", "必买", "惊喜", "期待", "太可", "太好", "绝美", "绝绝"}
 _NEGATIVE_WORDS = {"差", "难", "不好", "不行", "失望", "踩雷", "后悔", "垃圾", "坑", "贵", "不值", "丑", "避雷", "上当", "黑心", "翻车", "浪费", "太坑", "糟心", "踩坑", "辣鸡", "智商税", "割韭菜", "虚假宣传", "鸡肋", "踩坑", "无力吐槽", "一生黑", "再也不会", "别买", "退退退", "冤大头", "亏了", "不值当", "慎入", "落差大", "照骗", "避而远之"}
-_PAIN_KEYWORDS = {"怎么", "如何", "为什么", "怎么办", "求助", "救", "帮", "有没有", "有人", "求推荐", "求建议", "避雷", "踩坑", "后悔", "纠结", "难", "输", "错", "失败", "焦虑", "担心", "害怕", "迷茫", "困惑", "没用", "无效", "浪费"}
-_NEED_KEYWORDS = {"想要", "希望", "求", "需要", "推荐", "建议", "有没有", "有人", "教", "方法", "技巧", "攻略", "教程", "怎么", "如何"}
 
 
 def analyze_comments(full_analysis_data: dict) -> dict:
+    """
+    从采集数据中提取评论统计信息。
+    仅处理数值统计（情绪分类、互动统计），不做语义级痛点/需求分析。
+    语义级分析由 Codex agent 完成。
+    """
     top10 = full_analysis_data.get("top10", [])
 
     all_comments = []
-    pain_hits = collections.defaultdict(list)
-    need_hits = collections.defaultdict(list)
     author_reply_count = 0
     reader_comment_count = 0
     pos_count = 0
@@ -1611,12 +1505,6 @@ def analyze_comments(full_analysis_data: dict) -> dict:
                 pos_count += 1
             elif has_neg:
                 neg_count += 1
-            for kw in _PAIN_KEYWORDS:
-                if kw in content:
-                    pain_hits[kw].append(content[:80])
-            for kw in _NEED_KEYWORDS:
-                if kw in content:
-                    need_hits[kw].append(content[:80])
             for sub in c.get("sub_comments", []):
                 sub_content = sub.get("content", "").strip()
                 sub_is_author = sub.get("is_author", False)
@@ -1627,44 +1515,6 @@ def analyze_comments(full_analysis_data: dict) -> dict:
 
     total = len(all_comments)
     neu_count = total - pos_count - neg_count
-
-    pain_conclusions = []
-    if pain_hits:
-        sorted_pains = sorted(pain_hits.items(), key=lambda x: len(x[1]), reverse=True)
-        for kw, examples in sorted_pains[:5]:
-            count = len(examples)
-            if kw in ("怎么", "如何"):
-                pain_conclusions.append("用户普遍关注\u300c方法/操作\u300d问题（出现%d次），如如何解决特定场景难题" % count)
-            elif kw in ("为什么",):
-                pain_conclusions.append("用户频繁追问原因（出现%d次），对现象背后的逻辑有强烈求知欲" % count)
-            elif kw in ("后悔", "踩坑", "避雷"):
-                pain_conclusions.append("用户有踩坑/后悔经历（出现%d次），需要避坑指南和真实经验参考" % count)
-            elif kw in ("焦虑", "担心", "害怕", "迷茫"):
-                pain_conclusions.append("用户存在明显的焦虑/迷茫情绪（出现%d次），需要情感共鸣和方向指引" % count)
-            elif kw in ("难", "失败", "输", "错"):
-                pain_conclusions.append("用户面临挫折和困难（出现%d次），需要解决方案和心理支持" % count)
-            elif kw in ("纠结",):
-                pain_conclusions.append("用户在多个选择间纠结（出现%d次），需要决策参考和对比分析" % count)
-            else:
-                pain_conclusions.append("用户使用\u300c%s\u300d表达困扰（出现%d次）" % (kw, count))
-
-    need_conclusions = []
-    if need_hits:
-        sorted_needs = sorted(need_hits.items(), key=lambda x: len(x[1]), reverse=True)
-        for kw, examples in sorted_needs[:5]:
-            count = len(examples)
-            if kw in ("求", "想要", "希望"):
-                need_conclusions.append("用户有明确的求助/索取需求（出现%d次），希望获得具体资源或方案" % count)
-            elif kw in ("推荐", "建议"):
-                need_conclusions.append("用户需要产品/内容推荐（出现%d次），依赖他人建议做决策" % count)
-            elif kw in ("方法", "技巧", "攻略", "教程"):
-                need_conclusions.append("用户渴求实操方法（出现%d次），需要可落地的步骤指南" % count)
-            elif kw in ("教",):
-                need_conclusions.append("用户希望被手把手教导（出现%d次），教程类内容需求旺盛" % count)
-            elif kw in ("怎么", "如何"):
-                need_conclusions.append("用户的核心需求是获取方法论（出现%d次），\u300c怎么做\u300d类内容最受欢迎" % count)
-            else:
-                need_conclusions.append("用户使用\u300c%s\u300d表达诉求（出现%d次）" % (kw, count))
 
     sorted_comments = sorted(all_comments, key=lambda x: x["likes"], reverse=True)
     top_comments = []
@@ -1683,17 +1533,193 @@ def analyze_comments(full_analysis_data: dict) -> dict:
     else:
         sl = "中性"
 
+    # 收集评论原文用于后续 LLM 分析
+    raw_comment_texts = [c["content"] for c in all_comments if not c["is_author"]]
+
     return {
         "sentiment": {"positive": pos_count, "neutral": neu_count, "negative": neg_count, "total": total},
-        "pain_conclusions": pain_conclusions,
-        "need_conclusions": need_conclusions,
-        "pain_raw_count": len(pain_hits),
-        "need_raw_count": len(need_hits),
+        "total_comment_count": total,
         "top_comments": top_comments,
         "author_reply_rate": reply_rate,
-        "total_comment_count": total,
         "sentiment_label": sl,
+        # 以下为原始数据，供 Codex agent 分析用
+        "raw_comment_texts": raw_comment_texts,
+        "all_comments": all_comments,
     }
+
+def generate_html_report(account_name: str, platform: str, report_data: dict, full_data: dict, comment_insight: dict, export_dir: str, profile: dict = None) -> str:
+    """
+    生成 HTML 数据展示报告。
+    仅展示统计数据，分析内容由 Codex agent 生成后补充。
+    """
+    style = report_data.get("style_features", {})
+    stats = full_data.get("stats", {})
+    tag_freq = full_data.get("tag_freq", [])
+    category_stats = full_data.get("category_stats", {})
+    opinion = full_data.get("opinion_candidates", [])
+    value_words = full_data.get("value_words", [])
+    sentiment = comment_insight.get("sentiment", {})
+    engagement = report_data.get("\u4e92\u52a8\u8868\u73b0", {})
+
+    user_info = {}
+    if profile:
+        if platform == "xhs":
+            basic = (profile.get("userBasicInfo") or profile.get("user") or {})
+            nickname = (basic.get("nickname") or profile.get("nickname") or 
+                       profile.get("nickName") or profile.get("user_name") or account_name)
+            desc_text = (basic.get("desc") or basic.get("description") or 
+                        profile.get("desc") or profile.get("description") or "")
+            fans_count = (basic.get("fans") or basic.get("fansCount") or basic.get("fans_count") or 
+                         basic.get("followerCount") or basic.get("followers") or "")
+            if not fans_count:
+                for inter in profile.get("interactions") or []:
+                    if inter.get("type") == "fans":
+                        fans_count = str(inter.get("count", ""))
+                        break
+            avatar_raw = (basic.get("avatar") or basic.get("avatarUrl") or basic.get("headUrl") or
+                          basic.get("head_img") or basic.get("images") or basic.get("imageb") or 
+                          profile.get("avatar") or "")
+            if isinstance(avatar_raw, dict):
+                url_list = avatar_raw.get("url_list") or []
+                avatar = url_list[0] if url_list else ""
+            else:
+                avatar = avatar_raw if isinstance(avatar_raw, str) else ""
+            user_info = {
+                "nickname": nickname,
+                "desc": desc_text,
+                "fans": fans_count,
+                "avatar": avatar,
+            }
+        else:
+            user = profile.get("user", {})
+            nickname = (user.get("nickname") or profile.get("nickname") or 
+                       profile.get("nickName") or account_name)
+            desc_text = (user.get("description") or profile.get("description") or "")
+            fans_count = (user.get("fans") or user.get("followerCount") or 
+                         user.get("follower_count") or "")
+            avatar_raw = (user.get("avatar") or user.get("avatarLarger") or 
+                          user.get("avatarThumb") or profile.get("avatar") or "")
+            if isinstance(avatar_raw, dict):
+                url_list = avatar_raw.get("url_list") or []
+                avatar = url_list[0] if url_list else ""
+            else:
+                avatar = avatar_raw if isinstance(avatar_raw, str) else ""
+            user_info = {
+                "nickname": nickname,
+                "desc": desc_text,
+                "fans": fans_count,
+                "avatar": avatar,
+            }
+
+    collect_rate = engagement.get("collected_rate", 0) if isinstance(engagement, dict) else 0
+
+    category_html = _build_category_html(category_stats)
+    tags_html = _build_tags_html(tag_freq)
+    top_html = _build_top_html(report_data.get("best_performers", []))
+    sentiment_html = _build_sentiment_html(sentiment)
+    opinion_html = _build_opinion_html(opinion)
+    title_patterns_html = _build_title_patterns_html(style.get("title_patterns", {}))
+
+    top_cm_parts = []
+    for c in comment_insight.get("top_comments", [])[:5]:
+        top_cm_parts.append(
+            '<div class="cm">'
+            '<div class="cm-t">%s</div>'
+            '<div class="cm-m">\u2764\ufe0f %s \u00b7 %s</div>'
+            '</div>' % (_html_module.escape(c["content"][:120]), format(int(c.get("likes", 0) or 0), ","), _html_module.escape(c.get("user", "\u8bfb\u8005")))
+        )
+    top_cm_html = '\n'.join(top_cm_parts) if top_cm_parts else '<div class="empty">\u6682\u65e0\u8bc4\u8bba\u6570\u636e</div>'
+
+    vw_parts = []
+    for v in value_words[:10]:
+        word = v if isinstance(v, str) else v.get("word", "")
+        if word:
+            vw_parts.append('<span class="ot">\U0001f3af %s</span>' % _html_module.escape(word))
+    value_words_html = ('<div style="margin-top:10px"><div class="tag-group" style="margin-top:4px">' + ''.join(vw_parts) + '</div></div>') if vw_parts else ''
+
+    fans_str = str(user_info.get("fans", "")) if user_info.get("fans") else "N/A"
+    desc_str = _html_module.escape(user_info.get("desc", "")[:120]) if user_info.get("desc") else ""
+
+    # Placeholder for agent analysis — will be filled in by Codex agent
+    analysis_placeholder = '<div style="padding:20px;text-align:center;color:#7c7c9a;font-size:0.9em">🤖 LLM 分析内容即将生成，请等待 Codex agent 完成深度分析...</div>'
+
+    vars_dict = {
+        "account_name": _html_module.escape(account_name),
+        "real_nickname": _html_module.escape(user_info.get("nickname", account_name)),
+        "platform": "\u5c0f\u7ea2\u4e66" if platform == "xhs" else "\u6296\u97f3",
+        "avatar_url": _html_module.escape(user_info.get("avatar", "")),
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "fans": fans_str,
+        "desc": desc_str,
+        "total_notes": str(stats.get("total", 0)),
+        "avg_likes": format(stats.get("avg_likes", 0), ","),
+        "avg_comments": format(stats.get("avg_comments", 0), ","),
+        "avg_comments_note": "\uff08API\u8fd4\u56de\u603b\u6570\uff0c\u5df2\u91c7\u96c6" + str(comment_insight.get("total_comment_count", 0)) + "\u6761\u8bc4\u8bba\u6837\u672c\uff09",
+        "avg_collects": format(stats.get("avg_collects", 0), ","),
+        "total_comment_count": str(comment_insight.get("total_comment_count", 0)),
+        "cost": str(report_data.get("billing", {}).get("actual_cost", "?") if isinstance(report_data.get("billing"), dict) else "?"),
+        "audience": "\u5f85 LLM \u5206\u6790",
+        "tone": "\u5f85 LLM \u5206\u6790",
+        "stance": "\u5f85 LLM \u5206\u6790",
+        "title_avg_len": str(style.get("title_avg_length", 0)),
+        "title_patterns_html": title_patterns_html,
+        "category_html": category_html,
+        "tags_html": tags_html,
+        "top_html": top_html,
+        "sentiment_html": sentiment_html,
+        "sentiment_label": comment_insight.get("sentiment_label", "\u4e2d\u6027"),
+        "pain_conclusions_html": analysis_placeholder,
+        "need_conclusions_html": analysis_placeholder,
+        "top_cm_html": top_cm_html,
+        "author_reply_rate": str(comment_insight.get("author_reply_rate", 0)),
+        "collect_rate": str(collect_rate),
+        "opinion_html": opinion_html,
+        "value_words_html": value_words_html,
+    }
+
+    template_paths = [
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "mcp", "blogger-distiller", "scripts", "report_template.html"),
+        "/tmp/report_template.html",
+    ]
+    template = None
+    for tp in template_paths:
+        if os.path.exists(tp):
+            with open(tp, "r", encoding="utf-8") as f:
+                template = f.read()
+            break
+
+    if not template:
+        print("  \u26a0\ufe0f HTML\u6a21\u677f\u672a\u627e\u5230")
+        return ""
+
+    html = template
+    for key, val in vars_dict.items():
+        html = html.replace("{{" + key + "}}", str(val))
+
+    output_path = os.path.join(export_dir, "report.html")
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    print("  \U0001f310 HTML \u62a5\u544a: " + output_path)
+    return output_path
+
+    """\u6253\u5f00 HTML \u6587\u4ef6\u5230\u9ed8\u8ba4\u6d4f\u89c8\u5668"""
+    import subprocess as _sp
+    import platform as _pf
+    try:
+        if _pf.system() == "Darwin":
+            _sp.Popen(["open", html_path])
+        elif _pf.system() == "Linux":
+            _sp.Popen(["xdg-open", html_path])
+        elif _pf.system() == "Windows":
+            _sp.Popen(["start", html_path], shell=True)
+    except Exception as e:
+        print("  \u26a0\ufe0f \u65e0\u6cd5\u81ea\u52a8\u6253\u5f00\u6d4f\u89c8\u5668: " + str(e))
+
+
+# ============================================================
+# 标签搜索
+# ============================================================
 
 
 def _sentiment_pct(sentiment: dict, key: str) -> float:
@@ -1705,7 +1731,7 @@ def _sentiment_pct(sentiment: dict, key: str) -> float:
 
 def _build_category_html(category_stats: dict) -> str:
     if not category_stats:
-        return '<div class="empty">暂无分类数据</div>'
+        return '<div class="empty">\u6682\u65e0\u5206\u7c7b\u6570\u636e</div>'
     sorted_cats = sorted(category_stats.items(), key=lambda x: x[1].get("count", 0), reverse=True)
     colors = ["#6366f1", "#a855f7", "#ec4899", "#06b6d4", "#10b981", "#f59e0b"]
     parts = []
@@ -1715,15 +1741,12 @@ def _build_category_html(category_stats: dict) -> str:
         avg_likes = info.get("avg_likes", 0)
         top_note = info.get("top_note", "")
         color = colors[i % len(colors)]
-        title_sample = ""
-        if top_note:
-            title_sample = " 例: " + _html_module.escape(top_note[:30])
         label = _html_module.escape(name)[:24]
         parts.append(
             '<div class="br">'
             '<div class="bl">%s</div>'
             '<div class="bt"><div class="bf" style="width:%d%%;background:%s">%s</div></div>'
-            '<div class="bv">%d篇 均赞%s</div>'
+            '<div class="bv">%d\u7bc7 \u5747\u8d5e%s</div>'
             '</div>' % (label, pct, color, label, count, format(avg_likes, ','))
         )
     return '\n'.join(parts)
@@ -1731,7 +1754,7 @@ def _build_category_html(category_stats: dict) -> str:
 
 def _build_tags_html(tag_freq: list) -> str:
     if not tag_freq:
-        return '<div class="empty">暂无话题标签</div>'
+        return '<div class="empty">\u6682\u65e0\u8bdd\u9898\u6807\u7b7e</div>'
     tags = []
     for tag, count in tag_freq[:20]:
         tags.append('<span class="tg">#%s<span class="c">%d</span></span>' % (_html_module.escape(tag), count))
@@ -1743,12 +1766,12 @@ def _build_tags_html(tag_freq: list) -> str:
 
 def _build_top_html(best_performers: list) -> str:
     if not best_performers:
-        return '<div class="empty">暂无数据</div>'
+        return '<div class="empty">\u6682\u65e0\u6570\u636e</div>'
     parts = []
     for i, p in enumerate(best_performers[:5]):
         rk = "rk%d" % (i+1) if i < 3 else ""
         title_raw = p.get("title", "") or p.get("desc", "")
-        title = _html_module.escape(title_raw[:80]) if title_raw else "无标题"
+        title = _html_module.escape(title_raw[:80]) if title_raw else "\u65e0\u6807\u9898"
         likes = int(p.get("likes", 0) or 0)
         comments = int(p.get("comments", 0) or 0)
         collects = int(p.get("collects", 0) or 0)
@@ -1806,172 +1829,6 @@ def _build_opinion_html(opinion: list) -> str:
     return '<div class="tag-group">' + '\n'.join(parts) + '</div>'
 
 
-def generate_html_report(account_name: str, platform: str, report_data: dict, full_data: dict, comment_insight: dict, export_dir: str, profile: dict = None) -> str:
-    style = report_data.get("style_features", {})
-    stats = full_data.get("stats", {})
-    tag_freq = full_data.get("tag_freq", [])
-    category_stats = full_data.get("category_stats", {})
-    opinion = full_data.get("opinion_candidates", [])
-    value_words = full_data.get("value_words", [])
-    sentiment = comment_insight.get("sentiment", {})
-    engagement = report_data.get("\u4e92\u52a8\u8868\u73b0", {})
-
-    user_info = {}
-    if profile:
-        if platform == "xhs":
-            basic = (profile.get("userBasicInfo") or profile.get("user") or {})
-            # Try multiple field names for each attribute
-            nickname = (basic.get("nickname") or profile.get("nickname") or 
-                       profile.get("nickName") or profile.get("user_name") or account_name)
-            desc_text = (basic.get("desc") or basic.get("description") or 
-                        profile.get("desc") or profile.get("description") or "")
-            fans_count = (basic.get("fans") or basic.get("fansCount") or basic.get("fans_count") or 
-                         basic.get("followerCount") or basic.get("followers") or "")
-            # 如果 basic 里没有 fans，尝试从 profile.interactions 中提取
-            if not fans_count:
-                for inter in profile.get("interactions") or []:
-                    if inter.get("type") == "fans":
-                        fans_count = str(inter.get("count", ""))
-                        break
-            avatar_raw = (basic.get("avatar") or basic.get("avatarUrl") or basic.get("headUrl") or
-                          basic.get("head_img") or basic.get("images") or basic.get("imageb") or 
-                          profile.get("avatar") or "")
-            # 小红书 avatar 可能是 dict { url_list: [...] } 或字符串
-            if isinstance(avatar_raw, dict):
-                url_list = avatar_raw.get("url_list") or []
-                avatar = url_list[0] if url_list else ""
-            else:
-                avatar = avatar_raw if isinstance(avatar_raw, str) else ""
-            user_info = {
-                "nickname": nickname,
-                "desc": desc_text,
-                "fans": fans_count,
-                "avatar": avatar,
-            }
-        else:
-            user = profile.get("user", {})
-            nickname = (user.get("nickname") or profile.get("nickname") or 
-                       profile.get("nickName") or account_name)
-            desc_text = (user.get("description") or profile.get("description") or "")
-            fans_count = (user.get("fans") or user.get("followerCount") or 
-                         user.get("follower_count") or "")
-            avatar_raw = (user.get("avatar") or user.get("avatarLarger") or 
-                          user.get("avatarThumb") or profile.get("avatar") or "")
-            # 抖音 avatar 可能是 dict { url_list: [...] } 或字符串
-            if isinstance(avatar_raw, dict):
-                url_list = avatar_raw.get("url_list") or []
-                avatar = url_list[0] if url_list else ""
-            else:
-                avatar = avatar_raw if isinstance(avatar_raw, str) else ""
-            user_info = {
-                "nickname": nickname,
-                "desc": desc_text,
-                "fans": fans_count,
-                "avatar": avatar,
-            }
-
-    collect_rate = engagement.get("collected_rate", 0) if isinstance(engagement, dict) else 0
-    pain_conclusions = comment_insight.get("pain_conclusions", [])
-    need_conclusions = comment_insight.get("need_conclusions", [])
-
-    category_html = _build_category_html(category_stats)
-    tags_html = _build_tags_html(tag_freq)
-    top_html = _build_top_html(report_data.get("best_performers", []))
-    sentiment_html = _build_sentiment_html(sentiment)
-    opinion_html = _build_opinion_html(opinion)
-    title_patterns_html = _build_title_patterns_html(style.get("title_patterns", {}))
-
-    pain_html_parts = []
-    for c in pain_conclusions:
-        pain_html_parts.append('<div class="insight-card pain"><div class="ic-label">😣 痛点发现</div><div class="ic-text">%s</div></div>' % _html_module.escape(c))
-    pain_html = '\n'.join(pain_html_parts) if pain_html_parts else '<div class="empty">\u6682\u65e0\u8db3\u591f\u8bc4\u8bba\u6570\u636e\u63d0\u53d6\u75db\u70b9\u5206\u6790</div>'
-
-    need_html_parts = []
-    for c in need_conclusions:
-        need_html_parts.append('<div class="insight-card need"><div class="ic-label">💪 需求发现</div><div class="ic-text">%s</div></div>' % _html_module.escape(c))
-    need_html = '\n'.join(need_html_parts) if need_html_parts else '<div class="empty">\u6682\u65e0\u8db3\u591f\u8bc4\u8bba\u6570\u636e\u63d0\u53d6\u9700\u6c42\u5206\u6790</div>'
-
-    top_cm_parts = []
-    for c in comment_insight.get("top_comments", [])[:5]:
-        top_cm_parts.append(
-            '<div class="cm">'
-            '<div class="cm-t">%s</div>'
-            '<div class="cm-m">\u2764\ufe0f %s \u00b7 %s</div>'
-            '</div>' % (_html_module.escape(c["content"][:120]), format(int(c.get("likes", 0) or 0), ","), _html_module.escape(c.get("user", "\u8bfb\u8005")))
-        )
-    top_cm_html = '\n'.join(top_cm_parts) if top_cm_parts else '<div class="empty">\u6682\u65e0\u8bc4\u8bba\u6570\u636e</div>'
-
-    vw_parts = []
-    for v in value_words[:10]:
-        word = v if isinstance(v, str) else v.get("word", "")
-        if word:
-            vw_parts.append('<span class="ot">\U0001f3af %s</span>' % _html_module.escape(word))
-    value_words_html = ('<div style="margin-top:10px"><div class="tag-group" style="margin-top:4px">' + ''.join(vw_parts) + '</div></div>') if vw_parts else ''
-
-    fans_str = str(user_info.get("fans", "")) if user_info.get("fans") else "N/A"
-    desc_str = _html_module.escape(user_info.get("desc", "")[:120]) if user_info.get("desc") else ""
-
-    vars_dict = {
-        "account_name": _html_module.escape(account_name),
-        "real_nickname": _html_module.escape(user_info.get("nickname", account_name)),
-        "platform": "\u5c0f\u7ea2\u4e66" if platform == "xhs" else "\u6296\u97f3",
-        "avatar_url": _html_module.escape(user_info.get("avatar", "")),
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "fans": fans_str,
-        "desc": desc_str,
-        "total_notes": str(stats.get("total", 0)),
-        "avg_likes": format(stats.get("avg_likes", 0), ","),
-        "avg_comments": format(stats.get("avg_comments", 0), ","),
-        "avg_comments_note": "（API返回总数，已采集" + str(comment_insight.get("total_comment_count", 0)) + "条评论样本）",
-        "avg_collects": format(stats.get("avg_collects", 0), ","),
-        "total_comment_count": str(comment_insight.get("total_comment_count", 0)),
-        "cost": str(report_data.get("billing", {}).get("actual_cost", "?") if isinstance(report_data.get("billing"), dict) else "?"),
-        "audience": _html_module.escape(style.get("audience", "\u6cdb\u4eba\u7fa4")),
-        "tone": _html_module.escape(style.get("tone", "\u4e2d\u6027")),
-        "stance": _html_module.escape(style.get("stance", "\u4e2d\u6027\u53d9\u8ff0")),
-        "title_avg_len": str(style.get("title_avg_length", 0)),
-        "title_patterns_html": title_patterns_html,
-        "category_html": category_html,
-        "tags_html": tags_html,
-        "top_html": top_html,
-        "sentiment_html": sentiment_html,
-        "sentiment_label": comment_insight.get("sentiment_label", "\u4e2d\u6027"),
-        "pain_conclusions_html": pain_html,
-        "need_conclusions_html": need_html,
-        "top_cm_html": top_cm_html,
-        "author_reply_rate": str(comment_insight.get("author_reply_rate", 0)),
-        "collect_rate": str(collect_rate),
-        "opinion_html": opinion_html,
-        "value_words_html": value_words_html,
-    }
-
-    template_paths = [
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "mcp", "blogger-distiller", "scripts", "report_template.html"),
-        "/tmp/report_template.html",
-    ]
-    template = None
-    for tp in template_paths:
-        if os.path.exists(tp):
-            with open(tp, "r", encoding="utf-8") as f:
-                template = f.read()
-            break
-
-    if not template:
-        print("  \u26a0\ufe0f HTML\u6a21\u677f\u672a\u627e\u5230")
-        return ""
-
-    html = template
-    for key, val in vars_dict.items():
-        html = html.replace("{{" + key + "}}", str(val))
-
-    output_path = os.path.join(export_dir, "report.html")
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    print("  \U0001f310 HTML \u62a5\u544a: " + output_path)
-    return output_path
-
-
 def open_html_browser(html_path: str):
     """\u6253\u5f00 HTML \u6587\u4ef6\u5230\u9ed8\u8ba4\u6d4f\u89c8\u5668"""
     import subprocess as _sp
@@ -1987,9 +1844,50 @@ def open_html_browser(html_path: str):
         print("  \u26a0\ufe0f \u65e0\u6cd5\u81ea\u52a8\u6253\u5f00\u6d4f\u89c8\u5668: " + str(e))
 
 
-# ============================================================
-# 标签搜索
-# ============================================================
+
+
+def store_analysis_result(account_name: str, platform: str, analysis_data: dict) -> dict:
+    """
+    供 Codex agent 调用：将分析结果存入 competitor_analysis 表。
+    
+    Args:
+        account_name: 账号名
+        platform: 平台 (xhs/douyin)
+        analysis_data: {
+            "analysis_type": str,  # e.g. "定位与基调", "用户痛点分析", "完整报告"
+            "report": str,         # 分析报告文本
+            "raw_data": dict,      # 原始数据引用
+        }
+    
+    Returns:
+        {"status": "ok", "id": int} or {"status": "error", "message": str}
+    """
+    try:
+        from database import get_conn as get_knowledge_conn
+        from embedding import embed_to_bytes
+        conn = get_knowledge_conn("knowledge")
+        
+        content = analysis_data.get("report", "")
+        vec = embed_to_bytes(content) if content else None
+        
+        conn.execute(
+            "INSERT INTO competitor_analysis (account_name, platform, analysis_type, report, embedding, raw_data) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                account_name,
+                platform,
+                analysis_data.get("analysis_type", "full"),
+                content,
+                vec,
+                json.dumps(analysis_data.get("raw_data", {}), ensure_ascii=False),
+            )
+        )
+        conn.commit()
+        analysis_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.close()
+        return {"status": "ok", "id": analysis_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 
 def search_accounts_by_tags(industry: str = None, location: str = None, 
                               keyword: str = None, platform: str = None,

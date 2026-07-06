@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends, check_search_tools, get_search_instruction
 from platform_adapter import adapt_content
-from competitor_analyzer import check_tikhub_status, analyze_account, open_report, search_accounts_by_tags
+from competitor_analyzer import check_tikhub_status, analyze_account, open_report, search_accounts_by_tags, store_analysis_result
 from search_candidates import search_blogger_candidates
 from account_link import parse_account_link, get_cost_estimate
 from video_prompt import generate_video_prompt, generate_templates
@@ -392,6 +392,15 @@ def handle_request(request):
         industry = params.get("industry", "lawyer")
         result = get_search_instruction(industry)
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+    elif method == "store_analysis_result":
+        account_name = params.get("account_name", "")
+        platform = params.get("platform", "")
+        analysis_data = params.get("analysis_data", {})
+        result = store_analysis_result(account_name, platform, analysis_data)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
 
     return {"jsonrpc": "2.0", "id": request_id, "error": {
         "code": -32601, "message": f"Method not found: {method}"
