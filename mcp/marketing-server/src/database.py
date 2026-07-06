@@ -126,6 +126,24 @@ def _init_profile_db():
             status TEXT NOT NULL DEFAULT 'success',
             error_message TEXT
         );
+        CREATE TABLE IF NOT EXISTS account_tags (
+            account_name TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            industry_tags TEXT DEFAULT '[]',
+            location_tags TEXT DEFAULT '[]',
+            sub_areas TEXT DEFAULT '[]',
+            role_tag TEXT DEFAULT '',
+            audience_tag TEXT DEFAULT '',
+            tone_tag TEXT DEFAULT '',
+            content_types TEXT DEFAULT '[]',
+            tag_source TEXT DEFAULT '{}',
+            confidence TEXT DEFAULT 'low',
+            notes_count INTEGER DEFAULT 0,
+            analyzed_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(account_name, platform)
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_tags_industry ON account_tags(industry_tags);
+        CREATE INDEX IF NOT EXISTS idx_account_tags_location ON account_tags(location_tags);
     """)
     conn.commit()
     conn.close()

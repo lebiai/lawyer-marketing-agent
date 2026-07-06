@@ -1028,6 +1028,303 @@ def _detect_title_patterns(titles: list) -> dict:
 # 对外接口
 # ============================================================
 
+
+# ============================================================
+# 数据完整性检查
+# ============================================================
+
+def check_data_completeness(profile: dict, notes_count: int, expected_notes: int, 
+                             total_comments: int, notes_with_comments: int) -> dict:
+    """
+    检查采集数据的完整性，返回质量报告。
+    
+    Args:
+        profile: 博主资料 dict
+        notes_count: 实际采集到的内容数
+        expected_notes: 期望采集数（30/50/80）
+        total_comments: 评论总数（来自 API 的 commentCount 之和）
+        notes_with_comments: 实际带评论的内容数
+    
+    Returns:
+        {"status": "ok"/"warn"/"error", "checks": [...], "suggestions": [...]}
+    """
+    checks = []
+    suggestions = []
+    level = "ok"
+
+    # 1. Profile 检查
+    nickname = ""
+    desc = ""
+    fans = ""
+    if profile:
+        if profile.get("userBasicInfo"):
+            basic = profile["userBasicInfo"]
+            nickname = basic.get("nickname", "")
+            desc = basic.get("desc", "")
+            fans = str(basic.get("fans", ""))
+            if not fans:
+                for inter in profile.get("interactions") or []:
+                    if inter.get("type") == "fans":
+                        fans = str(inter.get("count", ""))
+                        break
+        elif profile.get("user"):
+            u = profile["user"]
+            nickname = u.get("nickname", "")
+            desc = u.get("description", "")
+            fans = str(u.get("fans", ""))
+    
+    missing_profile = []
+    if not nickname: missing_profile.append("昵称")
+    if not desc: missing_profile.append("简介")
+    if not fans or fans == "0": missing_profile.append("粉丝数")
+    
+    if missing_profile:
+        checks.append({
+            "level": "warn",
+            "icon": "\u26a0\ufe0f",
+            "item": "博主基础信息",
+            "detail": f"缺少: {', '.join(missing_profile)}，无法完整判断账号定位"
+        })
+        suggestions.append("缺少基础信息不影响内容分析，但定位判断受限")
+    else:
+        checks.append({
+            "level": "ok",
+            "icon": "\u2705",
+            "item": "博主基础信息",
+            "detail": f"昵称: {nickname[:15]} · 粉丝: {fans}"
+        })
+
+    # 2. 内容量检查
+    ratio = notes_count / expected_notes * 100 if expected_notes > 0 else 0
+    if notes_count < 5:
+        checks.append({
+            "level": "error",
+            "icon": "\u274c",
+            "item": "内容样本",
+            "detail": f"仅 {notes_count}条，样本不足以支撑有意义的分析（建议≥30条）"
+        })
+        suggestions.append(f"补充采集至{expected_notes}条（约¥0.5～1.5）")
+        level = "error"
+    elif ratio < 60:
+        checks.append({
+            "level": "warn",
+            "icon": "\u26a0\ufe0f",
+            "item": "内容采集",
+            "detail": f"获取 {notes_count}/{expected_notes}条（{ratio:.0f}%），缺失较多"
+        })
+        suggestions.append(f"缺失 {expected_notes - notes_count}条，可重试补采（约\u00a5{0.5 + (expected_notes-notes_count)/100:.1f}）")
+        if level == "ok": level = "warn"
+    elif ratio < 90:
+        checks.append({
+            "level": "info",
+            "icon": "\u2139\ufe0f",
+            "item": "内容采集",
+            "detail": f"获取 {notes_count}/{expected_notes}条（{ratio:.0f}%）"
+        })
+    else:
+        checks.append({
+            "level": "ok",
+            "icon": "\u2705",
+            "item": "内容采集",
+            "detail": f"{notes_count}/{expected_notes}条（{ratio:.0f}%）"
+        })
+
+    # 3. 评论量检查
+    if notes_count > 0:
+        avg_comments = total_comments / notes_count
+        if notes_with_comments == 0:
+            checks.append({
+                "level": "info",
+                "icon": "\u2139\ufe0f",
+                "item": "评论样本",
+                "detail": f"未采集评论，暂无法进行用户洞察分析"
+            })
+            suggestions.append("需评论分析时，可重新采集（约\u00a51.0）")
+        elif notes_with_comments < 5:
+            checks.append({
+                "level": "warn",
+                "icon": "\u26a0\ufe0f",
+                "item": "评论样本",
+                "detail": f"仅 {notes_with_comments}条内容带有评论（共{total_comments}条）"
+            })
+        else:
+            checks.append({
+                "level": "ok",
+                "icon": "\u2705",
+                "item": "评论样本",
+                "detail": f"{total_comments}条评论，分布在{notes_with_comments}条内容中（均{avg_comments:.1f}条/篇）"
+            })
+
+    return {"status": level, "checks": checks, "suggestions": suggestions}
+
+
+
+# ============================================================
+# 账号标签提取
+# ============================================================
+
+def extract_account_tags(profile: dict, content_stats: dict, 
+                          tag_freq: list, category_stats: dict,
+                          top10: list) -> dict:
+    """
+    从博主的昵称、简介、内容统计中自动提取账号标签。
+    
+    标签来源：
+      1. 昵称（如 "合肥王梦露|婚家律师" → 地域+行业）
+      2. 简介（如 80后律所合伙人，主做婚家案件 → 角色+业务）
+      3. 内容统计（如 76%起诉离婚 → 子领域）
+      4. 高频标签（如 #安徽婚家律师王梦露 #起诉离婚）
+    
+    Returns:
+        {industry, sub_areas, location, role, audience, tone, 
+         content_types, confidence, source}
+    """
+    tags = {
+        "industry": None,
+        "sub_areas": [],
+        "location": [],
+        "role": None,
+        "audience": None,
+        "tone": None,
+        "content_types": [],
+        "confidence": "low",  # low / medium / high
+        "source": {"from_nickname": False, "from_bio": False, "from_content": False},
+    }
+
+    # ---- 1. 从昵称提取 ----
+    nickname = ""
+    if profile:
+        if profile.get("userBasicInfo"):
+            nickname = profile["userBasicInfo"].get("nickname", "")
+        elif profile.get("user"):
+            nickname = profile["user"].get("nickname", "")
+    
+    # 常见分隔符拆分
+    if nickname:
+        parts = []
+        for sep in ["|", "·", "•", "-", "/", " "]:
+            if sep in nickname:
+                parts = [p.strip() for p in nickname.split(sep) if p.strip()]
+                break
+        if not parts:
+            parts = [nickname]
+        
+        # 从各部分检测行业/地域
+        industry_kw = {
+            "律师": "律师", "法律": "法律", "法务": "法律",
+            "医生": "医疗", "医师": "医疗",
+            "保险": "保险", "房产": "房产", "装修": "装修",
+            "教育": "教育", "老师": "教育", "教师": "教育",
+            "设计": "设计", "摄影": "摄影", "健身": "健身",
+            "美妆": "美妆", "护肤": "美妆", "穿搭": "时尚",
+            "美食": "美食", "旅行": "旅行", "育儿": "育儿",
+            "心理": "心理", "情感": "情感", "婚家": "律师·婚姻家事",
+            "婚姻": "律师·婚姻家事", "离婚": "律师·婚姻家事",
+        }
+        location_kw = {
+            "合肥": "合肥", "北京": "北京", "上海": "上海",
+            "广州": "广州", "深圳": "深圳", "杭州": "杭州",
+            "成都": "成都", "重庆": "重庆", "武汉": "武汉",
+            "西安": "西安", "长沙": "长沙", "苏州": "苏州",
+            "南京": "南京", "天津": "天津",
+            "安徽": "安徽", "河北": "河北",
+        }
+        role_kw = {
+            "合伙人": "合伙人", "创始人": "创始人",
+            "经理": "经理", "主管": "主管",
+            "导师": "导师", "医生": "医生",
+            "教授": "教授", "博士": "博士",
+        }
+        for p in parts:
+            for kw, label in industry_kw.items():
+                if kw in p:
+                    tags["industry"] = label
+                    tags["source"]["from_nickname"] = True
+                    break
+            for kw, label in location_kw.items():
+                if kw in p:
+                    tags["location"].append(label)
+                    tags["source"]["from_nickname"] = True
+            for kw, label in role_kw.items():
+                if kw in p:
+                    tags["role"] = label
+                    tags["source"]["from_nickname"] = True
+
+    # ---- 2. 从简介提取 ----
+    bio_text = ""
+    if profile:
+        if profile.get("userBasicInfo"):
+            bio_text = profile["userBasicInfo"].get("desc", "") or ""
+        elif profile.get("user"):
+            bio_text = profile["user"].get("description", "") or ""
+    
+    if bio_text:
+        for kw, label in {**industry_kw, **role_kw}.items():
+            if kw in bio_text and (not tags["industry"] or not tags["role"]):
+                if kw in role_kw and not tags["role"]:
+                    tags["role"] = role_kw[kw]
+                    tags["source"]["from_bio"] = True
+                if kw in industry_kw and not tags["industry"]:
+                    tags["industry"] = industry_kw[kw]
+                    tags["source"]["from_bio"] = True
+        # 从简介提取地域
+        location_kw_extended = {
+            "全国": "全国",
+        }
+        for kw, label in {**location_kw, **location_kw_extended}.items():
+            if kw in bio_text and label not in tags["location"]:
+                tags["location"].append(label)
+                tags["source"]["from_bio"] = True
+
+    # ---- 3. 从内容统计提取 ----
+    stats_text = ""
+    if category_stats:
+        sorted_cats = sorted(category_stats.items(), key=lambda x: x[1].get("count", 0), reverse=True)
+        top_cats = [c[0] for c in sorted_cats[:5]]
+        stats_text += " ".join(top_cats)
+    
+    if tag_freq:
+        top_tags_str = " ".join(t[0] for t in tag_freq[:10])
+        stats_text += " " + top_tags_str
+    
+    if stats_text:
+        # 子领域检测
+        sub_area_kw = {
+            "起诉离婚": "离婚纠纷", "离婚": "离婚纠纷",
+            "婚内财产": "财产分割", "财产分割": "财产分割",
+            "夫妻共同财产": "财产分割", "婚前财产": "财产分割",
+            "抚养权": "子女抚养权", "子女抚养": "子女抚养权",
+            "婚姻家事": "婚姻家事",
+            "法律": "法律咨询", "法律咨询": "法律咨询",
+            "婚姻": "婚姻纠纷", "婚约": "婚姻纠纷",
+        }
+        for kw, label in sub_area_kw.items():
+            if kw in stats_text and label not in tags["sub_areas"]:
+                tags["sub_areas"].append(label)
+                tags["source"]["from_content"] = True
+        
+        # 内容类型推断
+        type_keywords = {
+            "教程": "法律普法教程", "教你": "法律普法教程",
+            "案例": "案例分析", "分享": "经验分享",
+            "观点": "观点评论", "戏": "戏剧解析",
+            "日常": "日常Vlog",
+        }
+        for kw, label in type_keywords.items():
+            if kw in stats_text and label not in tags["content_types"]:
+                tags["content_types"].append(label)
+                tags["source"]["from_content"] = True
+    
+    # ---- 4. 确定置信度 ----
+    sources = sum([tags["source"]["from_nickname"], tags["source"]["from_bio"], tags["source"]["from_content"]])
+    if sources >= 2 and tags["industry"]:
+        tags["confidence"] = "high"
+    elif sources >= 1 and tags["industry"]:
+        tags["confidence"] = "medium"
+
+    return tags
+
+
 def analyze_account(account_name: str, platform: str, posts: list = None, user_id: str = None, url: str = None, max_notes: int = 50, max_comments: int = 20, parallel_workers: int = 3) -> dict:
     """
     完整的竞品账号分析入口
@@ -1082,8 +1379,61 @@ def analyze_account(account_name: str, platform: str, posts: list = None, user_i
             "suggested_tags": [],
         }
 
-    # 构建报告
+    # 数据完整性检查
+    notes_count = result.get("notes_count", 0)
+    raw_data = result.get("raw_data", {})
+    stats = raw_data.get("stats", {})
+    total_comments = stats.get("total_comments", 0)
+    notes_with_comments = sum(1 for n in raw_data.get("top10", []) if n.get("comment_list"))
+    completeness = check_data_completeness(
+        profile=result.get("profile", {}),
+        notes_count=notes_count,
+        expected_notes=max_notes,
+        total_comments=total_comments,
+        notes_with_comments=notes_with_comments,
+    )
+    
+    # 账号标签提取
+    account_tags = extract_account_tags(
+        profile=result.get("profile", {}),
+        content_stats=stats,
+        tag_freq=raw_data.get("tag_freq", []),
+        category_stats=raw_data.get("category_stats", {}),
+        top10=raw_data.get("top10", []),
+    )
+    report_data["account_tags"] = account_tags
+    
+    # 将标签存入数据库
+    try:
+        from database import get_conn as get_profile_conn
+        conn = get_profile_conn("profile")
+        import json as _json
+        conn.execute("""
+            INSERT OR REPLACE INTO account_tags 
+            (account_name, platform, industry_tags, location_tags, sub_areas,
+             role_tag, audience_tag, tone_tag, content_types, tag_source, 
+             confidence, notes_count, analyzed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        """, (
+            account_name, platform,
+            _json.dumps([account_tags["industry"]] if account_tags["industry"] else [], ensure_ascii=False),
+            _json.dumps(account_tags["location"], ensure_ascii=False),
+            _json.dumps(account_tags["sub_areas"], ensure_ascii=False),
+            account_tags["role"] or "",
+            account_tags["audience"] or "",
+            account_tags["tone"] or "",
+            _json.dumps(account_tags["content_types"], ensure_ascii=False),
+            _json.dumps(account_tags["source"], ensure_ascii=False),
+            account_tags["confidence"],
+            notes_count,
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"  ⚠️ 标签存入失败: {e}")
+    
     report_data = build_report_from_distiller(result)
+    report_data["data_completeness"] = completeness
     
     # 记录账单（使用估算中间值作为实际费用）
     actual_cost = round((cost_est["cost_min"] + cost_est["cost_max"]) / 2, 2)
@@ -1635,3 +1985,66 @@ def open_html_browser(html_path: str):
             _sp.Popen(["start", html_path], shell=True)
     except Exception as e:
         print("  \u26a0\ufe0f \u65e0\u6cd5\u81ea\u52a8\u6253\u5f00\u6d4f\u89c8\u5668: " + str(e))
+
+
+# ============================================================
+# 标签搜索
+# ============================================================
+
+def search_accounts_by_tags(industry: str = None, location: str = None, 
+                              keyword: str = None, platform: str = None,
+                              limit: int = 10) -> list:
+    """
+    按标签搜索已分析过的账号。
+    
+    Args:
+        industry: 行业筛选（如 "律师"、"律师·婚姻家事"）
+        location: 地域筛选（如 "合肥"）
+        keyword: 全文搜索（匹配账号名、简介）
+        platform: 平台筛选（"xhs" / "douyin"）
+        limit: 最大返回数
+    
+    Returns:
+        [{"account_name", "platform", "industry_tags", "location_tags",
+          "sub_areas", "role_tag", "notes_count", "analyzed_at"}, ...]
+    """
+    from database import get_conn
+    conn = get_conn("profile")
+    
+    conditions = []
+    params = []
+    
+    if industry:
+        conditions.append("industry_tags LIKE ?")
+        params.append(f'%{industry}%')
+    if location:
+        conditions.append("location_tags LIKE ?")
+        params.append(f'%{location}%')
+    if platform:
+        conditions.append("platform = ?")
+        params.append(platform)
+    if keyword:
+        conditions.append("(account_name LIKE ? OR role_tag LIKE ? OR sub_areas LIKE ?)")
+        kw = f'%{keyword}%'
+        params.extend([kw, kw, kw])
+    
+    where = " AND ".join(conditions) if conditions else "1=1"
+    query = f"SELECT account_name, platform, industry_tags, location_tags, sub_areas, role_tag, audience_tag, notes_count, analyzed_at FROM account_tags WHERE {where} ORDER BY analyzed_at DESC LIMIT ?"
+    params.append(limit)
+    
+    cursor = conn.execute(query, params)
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    # JSON strings -> Python objects
+    import json as _j
+    for r in results:
+        for field in ["industry_tags", "location_tags", "sub_areas"]:
+            if isinstance(r.get(field), str):
+                try:
+                    r[field] = _j.loads(r[field])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+    
+    return results
+

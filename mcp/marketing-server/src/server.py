@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends, check_search_tools, get_search_instruction
 from platform_adapter import adapt_content
-from competitor_analyzer import check_tikhub_status, analyze_account, open_report
+from competitor_analyzer import check_tikhub_status, analyze_account, open_report, search_accounts_by_tags
 from search_candidates import search_blogger_candidates
 from account_link import parse_account_link, get_cost_estimate
 from video_prompt import generate_video_prompt, generate_templates
@@ -251,6 +251,8 @@ def handle_request(request):
             "full_analysis_data": analysis_data,
             "comment_insight": result.get("comment_insight", {}),
             "html_report_path": result.get("html_report_path", ""),
+            "data_completeness": result.get("data_completeness", {}),
+            "account_tags": result.get("account_tags", {}),
             "storage": {
                 "table": "competitor_analysis",
                 "data": {
@@ -262,6 +264,16 @@ def handle_request(request):
                 }
             }
         }}
+
+    elif method == "search_accounts_by_tags":
+        results = search_accounts_by_tags(
+            industry=params.get("industry"),
+            location=params.get("location"),
+            keyword=params.get("keyword"),
+            platform=params.get("platform"),
+            limit=params.get("limit", 10),
+        )
+        return {"jsonrpc": "2.0", "id": request_id, "result": results}
 
     elif method == "generate_video_prompt":
         script = params.get("script", "")
