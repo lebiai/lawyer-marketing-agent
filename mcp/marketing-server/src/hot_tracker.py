@@ -1,18 +1,16 @@
 """
-热点追踪模块 V2 — 多维度热点分析 + 选题建议
+热点追踪模块 V2 — 搜索策略 + 热度存储
 
-核心流程：
-  1. 多维度搜索（行业/平台/时效）
-  2. 热度评分 + 平台匹配
-  3. 去重 + 历史追踪
-  4. 选题建议 + 内容角度
+数据流：
+  MCP: 提供搜索策略 → 执行搜索 → 去重评分 → 存储结果
+  Agent: 读取热点数据 → 分析趋势 → 生成选题建议
 """
 
 from datetime import datetime, timedelta
 from database import get_conn
 
 # ============================================================
-# 搜索策略配置
+# 搜索策略配置（仅提供搜索关键词模板）
 # ============================================================
 
 SEARCH_STRATEGIES = {
@@ -48,48 +46,6 @@ SEARCH_STRATEGIES = {
     }
 }
 
-# 平台匹配度分析
-PLATFORM_FIT = {
-    "解读分析": {"xiaohongshu": 3, "douyin": 4, "wechat": 5},
-    "案例评析": {"xiaohongshu": 5, "douyin": 5, "wechat": 4},
-    "行业观察": {"xiaohongshu": 2, "douyin": 3, "wechat": 5},
-    "普法科普": {"xiaohongshu": 5, "douyin": 5, "wechat": 3},
-    "职业指导": {"xiaohongshu": 4, "douyin": 3, "wechat": 4},
-}
-
-# 切入角度推荐
-ANGLE_TEMPLATES = {
-    "解读分析": [
-        "新规对比：旧规 vs 新规，变化在哪",
-        "直接影响：这条新规对普通人意味着什么",
-        "深度拆解：条文背后的立法意图",
-    ],
-    "案例评析": [
-        "案情回顾：发生了什么",
-        "法律分析：法院为什么这么判",
-        "警示意义：我们能学到什么",
-    ],
-    "行业观察": [
-        "趋势解读：行业正在发生什么变化",
-        "数据说话：用数据说明趋势",
-        "未来预测：接下来会怎么发展",
-    ],
-    "普法科普": [
-        "避坑指南：常见错误和正确做法",
-        "自检清单：你中了几条",
-        "必知必会：每个人都该知道的法律常识",
-    ],
-    "职业指导": [
-        "实用建议：给新人的X条建议",
-        "经验分享：过来人怎么说",
-        "路径规划：怎么从入门到精通",
-    ],
-}
-
-
-# ============================================================
-# 核心功能
-# ============================================================
 
 def get_search_strategy(industry: str = "lawyer") -> dict:
     """获取指定行业的完整搜索策略"""
@@ -112,195 +68,118 @@ def get_search_strategy(industry: str = "lawyer") -> dict:
 
 def analyze_hot_topics(raw_topics: list, industry: str = "lawyer") -> dict:
     """
-    对原始搜索结果进行热度分析、平台匹配、选题建议
+    对原始搜索结果进行去重、评分、存储。
+    不进行关键词匹配式的内容分析，深度分析由 Agent 完成。
+    
     raw_topics: [{title, description, source, url, heat_score?}, ...]
+    
+    Returns:
+        {"top": [...], "total": int, "fresh_count": int, "note": str}
     """
     strategy = SEARCH_STRATEGIES.get(industry, SEARCH_STRATEGIES["lawyer"])
-    
-    # 1. 去重 + 评分
-    scored = _score_and_dedup(raw_topics, strategy)
-    
-    # 2. 按热度排序取前10
+
+    # 1. 去重 + 基础评分（标题长度+来源权重）
+    seen_titles = set()
+    scored = []
+    for topic in raw_topics:
+        title = (topic.get("title") or "").strip()
+        if not title or title in seen_titles:
+            continue
+        seen_titles.add(title)
+
+        # 基础分：标题长度（长标题通常信息更丰富）
+        base = min(len(title) / 20, 5)
+        # 来源加分
+        source_bonus = 1 if topic.get("source") else 0
+        # 外部热度分（如果提供）
+        external = float(topic.get("heat_score", 0)) if topic.get("heat_score") else 0
+
+        total_score = base + source_bonus + external
+        topic["total_score"] = round(total_score, 2)
+        scored.append(topic)
+
+    # 2. 按总分排序取前 10
     scored.sort(key=lambda x: x["total_score"], reverse=True)
-    top = scored[:10]
-    
-    # 3. 历史去重（检查hot_topics表）
+    top = scored[:15]  # 多取一些供 Agent 筛选
+
+    # 3. 历史去重
     existing = _get_existing_topics()
     fresh = [t for t in top if t["title"] not in existing]
     
-    # 4. 为每个热点生成平台匹配和选题建议
-    results = []
-    for topic in fresh:
-        content_type = topic.get("content_type", "普法科普")
-        platforms = PLATFORM_FIT.get(content_type, {})
-        
-        # 找出最适合的平台
-        best_platforms = sorted(platforms.items(), key=lambda x: x[1], reverse=True)
-        recommended = [p[0] for p in best_platforms if p[1] >= 4]
-        
-        # 选题角度
-        angles = ANGLE_TEMPLATES.get(content_type, [])
-        
-        results.append({
-            "title": topic["title"],
-            "description": topic.get("description", ""),
-            "source": topic.get("source", "未知"),
-            "content_type": content_type,
-            "heat_level": topic["heat_level"],
-            "total_score": topic["total_score"],
-            "recommended_platforms": recommended,
-            "content_angles": angles[:3],
-            "is_new": topic["title"] not in existing,
-        })
-    
-    # 5. 汇总统计
-    stats = {
+    # 4. 存储到 DB
+    conn = get_conn("knowledge")
+    for topic in fresh[:10]:
+        conn.execute(
+            "INSERT INTO hot_topics (platform, topic, description, heat_score, trend, related_keywords) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                topic.get("platform") or topic.get("source", "unknown"),
+                topic["title"],
+                topic.get("description", "")[:500],
+                topic.get("total_score", 0),
+                "new",
+                "[]",
+            )
+        )
+    conn.commit()
+    conn.close()
+
+    return {
+        "top": top[:10],
         "total_raw": len(raw_topics),
         "after_dedup": len(scored),
-        "fresh_topics": len(fresh),
-        "existing_topics": len(top) - len(fresh),
-        "dimension_breakdown": {},
+        "fresh_count": len(fresh),
+        "note": f"共采集 {len(raw_topics)} 条，去重后 {len(scored)} 条，新增 {len(fresh)} 条。深度趋势分析由 Agent 完成。",
     }
-    for t in results:
-        ct = t["content_type"]
-        stats["dimension_breakdown"][ct] = stats["dimension_breakdown"].get(ct, 0) + 1
-    
-    return {
-        "industry": strategy["name"],
-        "analyzed_at": datetime.now().isoformat(),
-        "hot_topics": results,
-        "statistics": stats,
-    }
-
-
-def _score_and_dedup(raw_topics: list, strategy: dict) -> list:
-    """去重 + 热度评分"""
-    seen = set()
-    scored = []
-    
-    # 收集所有行业术语
-    all_terms = []
-    for dim_config in strategy["dimensions"].values():
-        all_terms.extend(dim_config["keywords"])
-    
-    for topic in raw_topics:
-        title = topic.get("title", "").strip()
-        if not title or title in seen:
-            continue
-        seen.add(title)
-        
-        desc = topic.get("description", "")
-        full_text = (title + " " + desc).lower()
-        
-        # 基础热度（默认中）
-        heat = topic.get("heat_score", 50)
-        
-        # 行业相关度加分
-        relevance = sum(1 for term in all_terms if any(w in full_text for w in term.split()))
-        relevance_bonus = min(relevance * 5, 30)
-        
-        # 多维度热度加分
-        dims = topic.get("source", "")
-        source_bonus = 10 if "小红书" in dims or "热搜" in dims else 0
-        
-        total = heat + relevance_bonus + source_bonus
-        
-        # 热度等级
-        if total >= 80:
-            level = "🔥🔥🔥 高"
-        elif total >= 50:
-            level = "🔥🔥 中"
-        else:
-            level = "🔥 低"
-        
-        # 判断内容类型
-        content_type = _classify_content(full_text, strategy)
-        
-        scored.append({
-            "title": title,
-            "description": desc,
-            "source": topic.get("source", "未知"),
-            "heat_score": heat,
-            "relevance_bonus": relevance_bonus,
-            "total_score": total,
-            "heat_level": level,
-            "content_type": content_type,
-        })
-    
-    return scored
-
-
-def _classify_content(text: str, strategy: dict) -> str:
-    """根据文本判断内容类型"""
-    type_keywords = {
-        "解读分析": ["新规", "出台", "实施", "修改", "条例", "修正", "发布"],
-        "热点案件": ["案", "开庭", "判决", "审理", "上诉", "起诉", "打官司"],
-        "行业观察": ["趋势", "发展", "增长", "数字化", "转型", "市场"],
-        "普法科普": ["注意", "警惕", "维权", "权益", "保护", "避坑", "指南"],
-        "职业指导": ["法考", "招聘", "求职", "工资", "实习", "就业"],
-    }
-    scores = {}
-    for ct, keywords in type_keywords.items():
-        scores[ct] = sum(1 for kw in keywords if kw in text)
-    if any(scores.values()):
-        return max(scores, key=scores.get)
-    return "普法科普"
 
 
 def _get_existing_topics(days: int = 7) -> set:
-    """获取近期已追踪过的热点（去重用）"""
+    """获取近期已存储的热点标题，用于去重"""
     conn = get_conn("knowledge")
     since = (datetime.now() - timedelta(days=days)).isoformat()
     rows = conn.execute(
-        "SELECT topic FROM hot_topics WHERE captured_at >= ?", (since,)
+        "SELECT topic FROM hot_topics WHERE captured_at >= ?",
+        (since,)
     ).fetchall()
     conn.close()
-    return {row["topic"] for row in rows}
+    return {r["topic"] for r in rows}
 
 
 def get_content_suggestions(hot_topic: dict) -> dict:
     """
-    针对单个热点，生成完整的创作建议
-    包括：选题角度、平台建议、标题方向、最佳发布时间
+    基于热点内容生成基础选题建议。
+    仅提供数据层面建议（平台、时效性），具体内容角度由 Agent 分析。
     """
-    content_type = hot_topic.get("content_type", "普法科普")
     title = hot_topic.get("title", "")
-    
-    # 选题角度
-    angles = ANGLE_TEMPLATES.get(content_type, ["深度分析"])
-    
-    # 平台匹配
-    platform_scores = PLATFORM_FIT.get(content_type, {})
-    ranked = sorted(platform_scores.items(), key=lambda x: x[1], reverse=True)
-    
-    # 标题方向
-    title_suggestions = []
-    for angle in angles[:3]:
-        title_suggestions.append(f"「{title}」｜{angle}")
-    
+    description = hot_topic.get("description", "")
+    content_type = hot_topic.get("content_type", "普法科普")
+
+    # 平台匹配（纯数据：给出各平台的基础匹配度）
+    platform_scores = {
+        "xiaohongshu": 3,
+        "douyin": 3,
+        "wechat": 3,
+    }
+
     return {
-        "topic": title,
+        "hot_topic": title,
         "content_type": content_type,
-        "suggestions": {
-            "angles": angles,
-            "best_platforms": [p[0] for p in ranked if p[1] >= 3],
-            "title_directions": title_suggestions,
-            "timing": "热点发布后 24 小时内跟进效果最佳",
-        },
+        "platform_scores": platform_scores,
+        "suggested_platforms": sorted(platform_scores, key=platform_scores.get, reverse=True)[:2],
+        "note": "具体内容角度和切入点由 Agent 基于热点原文和受众分析生成",
+        "raw": {"title": title, "desc": description[:200]},
     }
 
 
 def get_historical_trends(days: int = 30) -> dict:
-    """查看历史热点趋势"""
+    """查看历史热点追踪记录"""
     conn = get_conn("knowledge")
     since = (datetime.now() - timedelta(days=days)).isoformat()
-    
     rows = conn.execute(
         "SELECT topic, description, platform, captured_at FROM hot_topics WHERE captured_at >= ? ORDER BY captured_at DESC",
         (since,)
     ).fetchall()
     conn.close()
-    
+
     return {
         "period_days": days,
         "total": len(rows),
@@ -317,37 +196,33 @@ SEARCH_TOOL_OPTIONS = {
     "agent-reach": {
         "name": "Agent Reach",
         "platforms": ["小红书", "微博", "知乎", "B站", "Twitter", "百度", "全网"],
-        "check_command": "which agent-reach || echo 'not found'",
+        "check_command": "which agent-reach || echo \'not found\'",
         "capability": "多平台社交搜索",
-        "usage": 'agent-reach: 搜索「{query}」{platform}',
+        "usage": "agent-reach: 搜索「{query}」{platform}",
     },
     "anysearch": {
         "name": "AnySearch",
         "platforms": ["全网"],
-        "check_command": "which anysearch || echo 'not found'",
+        "check_command": "which anysearch || echo \'not found\'",
         "capability": "通用网页搜索",
-        "usage": '使用 anysearch 搜索「{query}」',
+        "usage": "使用 anysearch 搜索「{query}」",
     },
     "web_search": {
         "name": "Web Search",
         "platforms": ["全网"],
         "check_command": None,
         "capability": "通用网页搜索（Codex 内置）",
-        "usage": '使用 web_search 搜索「{query}」',
+        "usage": "使用 web_search 搜索「{query}」",
     },
 }
 
 def check_search_tools() -> dict:
-    """
-    检测当前环境可用的搜索工具
-    返回可用工具列表 + 推荐的搜索命令
-    """
+    """检测当前环境可用的搜索工具"""
     import shutil
-    
+
     available = []
     unavailable = []
-    
-    # 检查 agent-reach
+
     if shutil.which("agent-reach"):
         available.append({
             "tool": "agent-reach",
@@ -357,8 +232,7 @@ def check_search_tools() -> dict:
         })
     else:
         unavailable.append({"tool": "agent-reach", "reason": "未安装", "install_guide": "参考：https://github.com/Panniantong/Agent-Reach"})
-    
-    # 检查 anysearch
+
     if shutil.which("anysearch"):
         available.append({
             "tool": "anysearch",
@@ -368,15 +242,14 @@ def check_search_tools() -> dict:
         })
     else:
         unavailable.append({"tool": "anysearch", "reason": "未安装"})
-    
-    # web_search 始终可用（Codex 内置工具）
+
     available.append({
         "tool": "web_search",
         "name": "Web Search (Codex 内置)",
         "platforms": ["全网"],
         "priority": 3,
     })
-    
+
     return {
         "available": sorted(available, key=lambda x: x["priority"]),
         "unavailable": unavailable,
@@ -394,39 +267,28 @@ def _generate_fallback(available: list) -> list:
     """根据可用工具生成搜索执行计划"""
     plan = []
     tool_names = [a["tool"] for a in available]
-    
+
     if "agent-reach" in tool_names:
         plan.append("主方案：使用 agent-reach 进行多平台搜索")
-        plan.append("  - 小红书/微博：agent-reach social")
-        plan.append("  - 知乎/百度：agent-reach search")
     elif "anysearch" in tool_names:
         plan.append("替代方案：使用 anysearch 进行通用网页搜索")
     else:
         plan.append("兜底方案：使用 web_search（Codex 内置）进行搜索")
-    
-    plan.append("搜索完成后，调用 analyze_topics 分析结果")
+
+    plan.append("搜索完成后，调用 analyze_hot_topics 分析结果")
     return plan
 
 
 def get_search_instruction(industry: str = "lawyer") -> dict:
-    """
-    获取完整的搜索执行指令（含工具检测）
-    这是 Agent 实际执行搜索时应调用的入口
-    """
+    """获取完整的搜索执行指令（含工具检测）"""
     tools = check_search_tools()
     strategy = get_search_strategy(industry)
-    
     best = tools["best_tool"]
-    
+
     return {
         "industry": strategy["industry"],
         "tool": best,
         "dimensions": strategy["dimensions"],
-        "search_plan": [
-            f"{f['usage']}" for f in [
-                SEARCH_TOOL_OPTIONS.get(best["tool"], {})
-            ]
-        ] if False else tools["fallback_plan"],
         "fallback": tools["fallback_plan"],
         "workflow": [
             f"1. 检查到可用工具：{best['name']}",
