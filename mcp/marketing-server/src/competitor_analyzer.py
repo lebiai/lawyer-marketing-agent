@@ -1547,7 +1547,7 @@ def generate_html_report(account_name: str, platform: str, report_data: dict, fu
             '<div class="cm">'
             '<div class="cm-t">%s</div>'
             '<div class="cm-m">\u2764\ufe0f %s \u00b7 %s</div>'
-            '</div>' % (_html_module.escape(c["content"][:120]), format(c.get("likes", 0), ","), _html_module.escape(c.get("user", "\u8bfb\u8005")))
+            '</div>' % (_html_module.escape(c["content"][:120]), format(int(c.get("likes", 0) or 0), ","), _html_module.escape(c.get("user", "\u8bfb\u8005")))
         )
     top_cm_html = '\n'.join(top_cm_parts) if top_cm_parts else '<div class="empty">\u6682\u65e0\u8bc4\u8bba\u6570\u636e</div>'
 

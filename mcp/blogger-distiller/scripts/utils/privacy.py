@@ -108,6 +108,10 @@ def _anonymize_one(
     reader_map: {userid: "读者N"} 跨评论保持一致
     reader_counter: [int] 单元素列表当 mutable counter 用
     """
+    # TikTok API 用 text 字段，统一为 content
+    if "text" in comment and "content" not in comment:
+        comment["content"] = comment.pop("text")
+    
     # 已脱敏幂等保护
     if "speaker" in comment and comment.get("speaker") in (None, "",):
         pass  # speaker 为空还是当未脱敏处理
