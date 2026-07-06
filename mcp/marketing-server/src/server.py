@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from hot_tracker import get_search_queries, HOT_TOPIC_SEARCHES
 from platform_adapter import adapt_content
+from competitor_analyzer import generate_analysis_report, extract_style_tags
+from video_prompt import generate_video_prompt, generate_templates
 import json
 import sys
 import os
@@ -169,6 +171,37 @@ def handle_request(request):
         rules = json.loads(row["rules"])
         result = adapt_content(content, source, target, rules)
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "analyze_account":
+        account = params.get("account_name", "")
+        platform = params.get("platform", "")
+        raw_data = params.get("raw_data", {})
+        report = generate_analysis_report(account, platform, raw_data)
+        tags = extract_style_tags(report)
+        return {"jsonrpc": "2.0", "id": request_id, "result": {
+            "report": report,
+            "suggested_tags": tags,
+            "storage": {
+                "table": "competitor_analysis",
+                "data": {
+                    "account_name": account,
+                    "platform": platform,
+                    "analysis_type": "full",
+                    "report": report,
+                    "raw_data": raw_data
+                }
+            }
+        }}
+
+    elif method == "generate_video_prompt":
+        script = params.get("script", "")
+        mode = params.get("mode", "live")
+        result = generate_video_prompt(script, mode)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "get_video_templates":
+        templates = generate_templates()
+        return {"jsonrpc": "2.0", "id": request_id, "result": templates}
 
     return {"jsonrpc": "2.0", "id": request_id, "error": {
         "code": -32601, "message": f"Method not found: {method}"
