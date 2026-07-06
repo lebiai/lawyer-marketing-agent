@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from hot_tracker import get_search_queries, HOT_TOPIC_SEARCHES
+from hot_tracker import get_search_strategy, analyze_hot_topics, get_content_suggestions, get_historical_trends
 from platform_adapter import adapt_content
 from competitor_analyzer import generate_analysis_report, extract_style_tags
 from video_prompt import generate_video_prompt, generate_templates
@@ -156,13 +156,24 @@ def handle_request(request):
 
     elif method == "hot_track":
         industry = params.get("industry", "lawyer")
-        queries = get_search_queries(industry)
-        return {"jsonrpc": "2.0", "id": request_id, "result": {
-            "search_queries": queries,
-            "industry_terms": HOT_TOPIC_SEARCHES.get(industry, {}).get("industry_terms", []),
-            "instruction": "请使用 agent-reach 搜索以上关键词，然后调用 filter_by_industry 筛选结果"
-        }}
+        result = get_search_strategy(industry)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
+    elif method == "analyze_topics":
+        raw = params.get("raw_topics", [])
+        industry = params.get("industry", "lawyer")
+        result = analyze_hot_topics(raw, industry)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "get_content_suggestions":
+        topic = params.get("topic", {})
+        result = get_content_suggestions(topic)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    elif method == "get_trends":
+        days = params.get("days", 30)
+        result = get_historical_trends(days)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
     elif method == "adapt_platform":
         content = params.get("content", "")
         source = params.get("source_platform", "general")
