@@ -1,5 +1,5 @@
 import numpy as np
-from embedding import embed, cosine_similarity
+from embedding import embed, cosine_similarity, vec_from_bytes
 from database import get_conn
 
 def search_knowledge(query: str, type_filter: str = None, platform_filter: str = None, top_k: int = 5):
@@ -13,7 +13,7 @@ def search_knowledge(query: str, type_filter: str = None, platform_filter: str =
         for row in cursor.fetchall():
             if not row["embedding"]:
                 continue
-            vec = np.frombuffer(row["embedding"], dtype=np.float32)
+            vec = vec_from_bytes(row["embedding"])
             score = cosine_similarity(query_vec, vec)
             results.append({
                 "table": table,
@@ -37,7 +37,7 @@ def search_analysis(query: str, top_k: int = 5):
         for row in cursor.fetchall():
             if not row["embedding"]:
                 continue
-            vec = np.frombuffer(row["embedding"], dtype=np.float32)
+            vec = vec_from_bytes(row["embedding"])
             score = cosine_similarity(query_vec, vec)
             results.append({
                 "table": table,

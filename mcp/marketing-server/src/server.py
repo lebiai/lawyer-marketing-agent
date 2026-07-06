@@ -7,7 +7,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from database import init_databases
-from embedding import embed, get_model
+from embedding import embed, embed_to_bytes, get_model
 from search import search_knowledge, search_analysis
 
 def handle_request(request):
@@ -50,7 +50,7 @@ def handle_request(request):
         table = params.get("table")
         data = params.get("data", {})
         content = data.get("content", "")
-        vec = embed(content)
+        vec = embed_to_bytes(content)
 
         if table == "content_samples":
             conn.execute(
@@ -134,7 +134,12 @@ def handle_request(request):
             for table_row in cursor.fetchall():
                 table = table_row["name"]
                 rows = conn.execute(f"SELECT * FROM {table}").fetchall()
-                data[f"{db_name}.{table}"] = [dict(r) for r in rows]
+                items = []
+                for r in rows:
+                    d = dict(r)
+                    d.pop("embedding", None)
+                    items.append(d)
+                data[f"{db_name}.{table}"] = items
             conn.close()
         return {"jsonrpc": "2.0", "id": request_id, "result": data}
 
